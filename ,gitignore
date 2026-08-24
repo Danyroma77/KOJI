@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+
+# IDE
+.vscode/
+.idea/
+
+# Dati (volume Docker)
+data/
+
+# Env
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model files (troppo grandi per git)
+*.gguf
+*.bin
+*.safetensors

@@ -1,0 +1,197 @@
+/* ==========================================================================
+   KOJI — JEEG ROBOT D'ACCIAIO THEME
+   Piattaforma locale di gestione della conoscenza
+   Palette ispirata a Jeeg: verde operativo, oro comando, acciaio scuro
+   ========================================================================== */
+
+:root {
+  /* === Palette Jeeg === */
+  --jeeg-green: #00A859;
+  --jeeg-green-dark: #007D41;
+  --jeeg-green-dim: rgba(0, 168, 89, 0.12);
+  --jeeg-green-glow: rgba(0, 168, 89, 0.35);
+  --jeeg-yellow: #FFD700;
+  --jeeg-yellow-dim: rgba(255, 215, 0, 0.10);
+  --jeeg-yellow-glow: rgba(255, 215, 0, 0.20);
+  --jeeg-red: #D32F2F;
+  --jeeg-red-dim: rgba(211, 47, 47, 0.12);
+  --jeeg-amber: #F5A623;
+  --jeeg-amber-dim: rgba(245, 166, 35, 0.12);
+  --jeeg-blue: #3B9EFF;
+  --jeeg-blue-dim: rgba(59, 158, 255, 0.10);
+
+  /* === Superfici === */
+  --bg-deep: #14181E;
+  --bg-base: #1A1F26;
+  --bg-surface: #1E2530;
+  --bg-card: #242B35;
+  --bg-elevated: #2A3240;
+  --bg-hover: #2F3846;
+
+  /* === Bordi === */
+  --border-subtle: rgba(47, 56, 70, 0.6);
+  --border-default: rgba(47, 56, 70, 0.9);
+  --border-focus: var(--jeeg-yellow);
+  --border-accent: var(--jeeg-green);
+
+  /* === Testo === */
+  --text-primary: #F5F7FA;
+  --text-secondary: #8B949E;
+  --text-muted: #545D68;
+  --text-inverse: #000000;
+
+  /* === Alias per coerenza interna === */
+  --accent: var(--jeeg-green);
+  --accent-bright: #00C96A;
+  --accent-dim: var(--jeeg-green-dim);
+  --amber: var(--jeeg-amber);
+  --amber-dim: var(--jeeg-amber-dim);
+  --red: var(--jeeg-red);
+  --red-dim: var(--jeeg-red-dim);
+  --blue: var(--jeeg-blue);
+  --blue-dim: var(--jeeg-blue-dim);
+
+  /* === Tipografia === */
+  --font-sans: 'Plus Jakarta Sans', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+
+  /* === Dimensioni === */
+  --text-xs: 0.7rem;
+  --text-sm: 0.8rem;
+  --text-base: 0.9rem;
+  --text-lg: 1.05rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.6rem;
+  --text-3xl: 2rem;
+
+  /* === Spaziature === */
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+  --space-2xl: 3rem;
+
+  /* === Radii === */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+
+  /* === Ombre === */
+  --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--border-subtle);
+  --shadow-elevated: 0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--border-default);
+  --shadow-green-glow: 0 0 18px var(--jeeg-green-glow);
+  --shadow-yellow-glow: 0 0 18px var(--jeeg-yellow-glow);
+
+  /* === Transizioni === */
+  --transition-fast: 150ms ease;
+  --transition-base: 250ms ease;
+  --transition-slow: 400ms ease;
+
+  /* === Layout === */
+  --navbar-h: 56px;
+  --sidebar-w: 260px;
+}
+
+/* ==========================================================================
+   RESET E BASE
+   ========================================================================== */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.6;
+  color: var(--text-primary);
+  /* Sfondo con griglia sottile stile comando mecha */
+  background-color: var(--bg-base);
+  background-image:
+    linear-gradient(rgba(47, 56, 70, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(47, 56, 70, 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+  overflow-x: hidden;
+}
+
+/* Scrollbar personalizzata — stile mecha */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-deep);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--bg-hover);
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--jeeg-green);
+  border-color: var(--jeeg-green-dark);
+}
+
+/* Focus visibile — alone dorato per accessibilità */
+*:focus-visible {
+  outline: 2px solid var(--jeeg-yellow);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Link */
+a {
+  color: var(--jeeg-green);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+a:hover {
+  color: var(--accent-bright);
+}
+
+/* Selezione testo — verde Jeeg */
+::selection {
+  background: var(--jeeg-green-dim);
+  color: var(--jeeg-green);
+}
+
+/* Skip to content per screen reader */
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: var(--space-md);
+  background: var(--jeeg-yellow);
+  color: var(--text-inverse);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  z-index: 9999;
+  transition: top var(--transition-fast);
+}
+.skip-link:focus {
+  top: var(--space-sm);
+}
+
+/* Classe utility per screen reader */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

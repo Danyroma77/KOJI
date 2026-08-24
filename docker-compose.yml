@@ -1,0 +1,85 @@
+version: "3.8"
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: koji-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    deploy:
+      resources:
+        limits:
+          memory: 10G
+          cpus: "4.0"
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: koji-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - koji-data:/data
+    environment:
+      - KOJI_DATA_DIR=/data
+      - KOJI_DATASET_NAME=default
+      - KOJI_OLLAMA_BASE_URL=http://ollama:11434
+      - 'KOJI_AVAILABLE_MODELS=["llama3.2:3b","mistral:7b","qwen2.5:3b","gemma2:2b","phi3:3.8b"]'
+    depends_on:
+      - ollama
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2.0"
+
+  # === Worker — processo separato per il processing ===
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: koji-worker
+    volumes:
+      - koji-data:/data
+    environment:
+      - KOJI_DATA_DIR=/data
+      - KOJI_DATASET_NAME=default
+    # Sovrascrive il CMD — invece di uvicorn avvia il worker
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      - api
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2.0"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: koji-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.js:/app/vite.config.js
+      - ./frontend/package.json:/app/package.json
+    environment:
+      - NODE_ENV=development
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  koji-data:
+    driver: local
+  ollama-data:
+    driver: local

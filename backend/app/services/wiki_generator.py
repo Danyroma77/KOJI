@@ -1,0 +1,211 @@
+"""
+Wiki Generator — Genera pagine Markdown navigabili
+a partire dai documenti processati.
+"""
+
+from __future__ import annotations
+import re
+import json
+from pathlib import Path
+from typing import Optional
+
+from app.config import settings
+
+
+class WikiGenerator:
+    """Genera pagine wiki semantiche dai documenti della KB."""
+
+    def __init__(self):
+        self.wiki_dir = settings.WIKI_DIR
+        self.wiki_dir.mkdir(parents=True, exist_ok=True)
+
+    def generate_all(self, documents: list[dict]) -> dict:
+        """Genera pagine wiki per tutti i documenti processati.
+
+        Args:
+            documents: Lista di dict con chiavi {id, filename, processed_text, metadata}.
+
+        Returns:
+            Struttura dell'indice wiki generato.
+        """
+        import importlib
+        # Raggruppa per argomento (semplice: per titolo/sezione)
+        pages = {}
+
+        for doc in documents:
+            text = doc.get("processed_text", "")
+            if not text:
+                continue
+
+            # Estrai sezioni dal testo markdown
+            sections = self._extract_sections(text, doc)
+
+            for section in sections:
+                page_id = self._slugify(section["title"])
+                if page_id not in pages:
+                    pages[page_id] = {
+                        "id": page_id,
+                        "title": section["title"],
+                        "content": f"# {section['title']}\n\n",
+                        "sources": set(),
+                    }
+                pages[page_id]["content"] += section["content"] + "\n\n"
+                pages[page_id]["sources"].add(doc.get("filename", "Sconosciuto"))
+
+        # Linking tra entità (semplice: parole in maiuscolo nei titoli)
+        pages = self._link_entities(pages)
+
+        # Scrivi file e costruisci indice
+        index = self._build_index(pages)
+
+        for page_id, page in pages.items():
+            page_path = self.wiki_dir / f"{page_id}.md"
+            content = page["content"]
+            # Aggiungi fonti in fondo
+            content += f"\n\n---\n\n**Fonti:** {', '.join(sorted(page['sources']))}\n"
+            page_path.write_text(content, encoding="utf-8")
+
+        # Salva indice
+        index_path = self.wiki_dir / "index.json"
+        index_path.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        return index
+
+    def _extract_sections(self, text: str, doc: dict) -> list[dict]:
+        """Estrae sezioni dal testo markdown."""
+        sections = []
+        current_title = doc.get("filename", "Senza titolo")
+        current_content = []
+        in_section = False
+
+        for line in text.split("\n"):
+            heading_match = re.match(r"^(#{2,4})\s+(.+)$", line)
+            if heading_match:
+                if in_section and current_content:
+                    sections.append({
+                        "title": current_title,
+                        "content": "\n".join(current_content).strip(),
+                    })
+                current_title = heading_match.group(2).strip()
+                current_content = [line]
+                in_section = True
+            else:
+                current_content.append(line)
+
+        # Ultima sezione
+        if current_content:
+            sections.append({
+                "title": current_title,
+                "content": "\n".join(current_content).strip(),
+            })
+
+        # Se non ci sono sezioni H2+, il documento intero è una pagina
+        if not sections and text.strip():
+            sections.append({
+                "title": doc.get("metadata", {}).get("title", doc["filename"]),
+                "content": text.strip(),
+            })
+
+        return sections
+
+    def _link_entities(self, pages: dict) -> dict:
+        """Crea collegamenti tra pagine wiki per entità condivise."""
+        # Raccogli tutte le parole chiave dai titoli
+        title_words = {}
+        for page_id, page in pages.items():
+            words = re.findall(r"\b[A-Z][a-z]+(?:\s[A-Z][a-z]+)*\b", page["title"])
+            for word in words:
+                if len(word) > 3:
+                    title_words.setdefault(word.lower(), []).append(page_id)
+
+        # Sostituisci nei contenuti
+        for page_id, page in pages.items():
+            content = page["content"]
+            for word, ids in title_words.items():
+                if page_id not in ids and len(ids) == 1:
+                    # Link alla pagina unica
+                    pattern = re.compile(rf"\b{re.escape(word)}\b", re.IGNORECASE)
+                    target_id = ids[0]
+                    content = pattern.sub(
+                        f"[{word}](#{target_id})",
+                        content,
+                    )
+            page["content"] = content
+
+        return pages
+
+    def _build_index(self, pages: dict) -> dict:
+        """Costruisce la struttura dell'indice wiki."""
+        groups = {}
+        for page_id, page in pages.items():
+            source = list(page["sources"])[0] if page["sources"] else "Altro"
+            group_name = self._categorize(source)
+            if group_name not in groups:
+                groups[group_name] = []
+            groups[group_name].append({
+                "id": page_id,
+                "label": page["title"],
+            })
+
+        return {
+            "groups": [
+                {"title": name, "items": items}
+                for name, items in groups.items()
+            ]
+        }
+
+    def _categorize(self, filename: str) -> str:
+        """Categorizza un file in un gruppo dell'indice."""
+        fn = filename.lower()
+        if "regolament" in fn:
+            return "Regolamenti"
+        elif "circolar" in fn:
+            return "Circolari"
+        elif "procedur" in fn or "manuale" in fn:
+            return "Procedure"
+        elif "faq" in fn:
+            return "FAQ"
+        else:
+            return "Altro"
+
+    def _slugify(self, text: str) -> str:
+        """Converte un titolo in uno slug URL-safe."""
+        text = text.lower().strip()
+        text = re.sub(r"[àáâãäå]", "a", text)
+        text = re.sub(r"[èéêë]", "e", text)
+        text = re.sub(r"[ìíîï]", "i", text)
+        text = re.sub(r"[òóôõö]", "o", text)
+        text = re.sub(r"[ùúûü]", "u", text)
+        text = re.sub(r"[^a-z0-9]+", "-", text)
+        text = text.strip("-")
+        return text[:60] or "page"
+
+    def get_page(self, page_id: str) -> Optional[dict]:
+        """Legge una pagina wiki dal disco."""
+        page_path = self.wiki_dir / f"{page_id}.md"
+        if page_path.exists():
+            content = page_path.read_text(encoding="utf-8")
+            title = page_id.replace("-", " ").title()
+            first_line = content.split("\n")[0]
+            if first_line.startswith("# "):
+                title = first_line[2:].strip()
+            sources = []
+            for line in content.split("\n"):
+                if line.startswith("**Fonti:**"):
+                    sources_str = line.replace("**Fonti:**", "").strip()
+                    sources = [s.strip() for s in sources_str.split("·")]
+                    if not sources:
+                        sources = [s.strip() for s in sources_str.split(",")]
+            return {"id": page_id, "title": title, "content": content, "sources": sources}
+        return None
+
+    def get_index(self) -> dict:
+        """Legge l'indice wiki dal disco."""
+        index_path = self.wiki_dir / "index.json"
+        if index_path.exists():
+            return json.loads(index_path.read_text(encoding="utf-8"))
+        return {"groups": []}
+
+
+# Istanza singleton
+wiki_generator = WikiGenerator()
