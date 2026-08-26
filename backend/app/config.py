@@ -98,6 +98,7 @@ class Settings(BaseSettings):
         self.WIKI_DIR = dataset_path / "wiki"
         self.GRAPH_FILE = dataset_path / "graph.json"
         self.CATALOG_FILE = dataset_path / "catalog.json"
+        self.ACTIVITY_LOG_FILE = dataset_path / "activities.json"
         self.EMBEDDING_CACHE_DIR = dataset_path / "embedding_cache"
         self.CHROMA_PERSIST_DIR = dataset_path / "chroma"
         self.GRAPH_EXTRACTION_MODEL = None

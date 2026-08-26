@@ -23,12 +23,44 @@ class LLMManager:
         self._pull_tasks: dict[str, asyncio.Task] = {}
         self._pull_progress: dict[str, dict] = {}
 
+        # Ripristina il modello attivo persistito (un solo attivo alla volta)
+        active_file = settings.DATA_DIR / "active_model.json"
+        try:
+            if active_file.exists():
+                data = json.loads(active_file.read_text(encoding="utf-8"))
+                self._active_model = data.get("model")
+        except Exception:
+            pass
+
     @property
     def active_model(self) -> str:
         return self._active_model or settings.OLLAMA_MODEL
 
     def set_active_model(self, model: str):
+        """Imposta l'unico modello attivo e lo persiste su disco."""
         self._active_model = model
+        try:
+            active_file = settings.DATA_DIR / "active_model.json"
+            active_file.write_text(
+                json.dumps({"model": model}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass  # La persistenza è best-effort
+
+    def is_active(self, model: str) -> bool:
+        """True se il modello è quello attivo (confronto per nome base)."""
+        want = (self.active_model or "").split(":", 1)[0].lower()
+        candidate = (model or "").split(":", 1)[0].lower()
+        return bool(candidate) and candidate == want
+
+    async def installed_names(self) -> set[str]:
+        """Nomi esatti dei modelli attualmente installati/scaricati in Ollama."""
+        try:
+            tags = await self.list_models()
+            return {m.get("name", "") for m in tags if m.get("name")}
+        except Exception:
+            return set()
 
     async def check_health(self) -> bool:
         """Verifica che Ollama sia raggiungibile."""

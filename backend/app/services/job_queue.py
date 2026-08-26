@@ -135,6 +135,23 @@ class JobQueue:
                 count += 1
             return count
 
+    def cancel_pending_for_doc(self, doc_id):
+        """Annulla i job pendenti di un documento (es. dopo la sua eliminazione).
+
+        Evita che il worker processi un documento non più esistente e registri
+        un errore fuorviante nella cronologia delle attività.
+        """
+        with self._lock:
+            count = 0
+            for job in self._list_jobs(status=JobStatus.PENDING):
+                if job.payload.get("doc_id") == doc_id:
+                    job.status = JobStatus.FAILED
+                    job.completed_at = datetime.now().isoformat()
+                    job.error = "Annullato: documento eliminato prima del processing"
+                    self._save_job(job)
+                    count += 1
+            return count
+
     def _list_jobs(self, status=None):
         jobs = []
         for f in self.queue_dir.glob("*.json"):
@@ -148,7 +165,7 @@ class JobQueue:
         return jobs
 
     def _save_job(self, job):
-        path = self.queue_dir / f"{job_id}.json"
+        path = self.queue_dir / f"{job.id}.json"
         path.write_text(json.dumps(job.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
 
 

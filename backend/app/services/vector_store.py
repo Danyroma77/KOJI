@@ -33,12 +33,14 @@ class VectorStore:
         self._chroma = chromadb.PersistentClient(
             path=str(settings.CHROMA_PERSIST_DIR)
         )
+        # NB: non passare metadata {"hnsw:M", "hnsw:efConstruction"} — da
+        # ChromaDB >= 0.4.16 queste chiavi sono state rimosse e su 0.5.7 la
+        # creazione fallisce lasciando una collection SENZA segmenti (ogni
+        # successiva count()/query() va in StopIteration). Si usano i default
+        # della libreria; le impostazioni HNSW_* restano in config per un
+        # eventuale futuro uso del parametro `configuration`.
         self._collection = self._chroma.get_or_create_collection(
-            name="knowlocal_chunks",
-            metadata={
-                "hnsw:M": settings.HNSW_M,
-                "hnsw:efConstruction": settings.HNSW_EF_CONSTRUCTION,
-            }
+            name="knowlocal_chunks"
         )
 
         # Ricostruisci indice BM25 dalla collection
@@ -179,16 +181,10 @@ class VectorStore:
         dense_results = self.dense_search(query_embedding, top_k_dense)
         keyword_results = self.keyword_search(query, top_k_keyword)
 
-        # Reciprocal Rank Fusion
-        rrf_scores = {}
-
-        for rank, item in enumerate(dense_results, start=1):
-            id_ = item["id"]
-            rrf_scores[id_] = rrf_scores.get(id_, 0) + 1 / (rrf_k + rank)
-            if id_ not in rrf_scores or "dense" not in rrf_scores[id_]:
-                rrf_scores[id_] = rrf_scores.get(id_, 0)
-
-        # Separiamo i punteggi RRF dai dati
+        # Reciprocal Rank Fusion — accumula i punteggi RRF per id
+        # NB: il vecchio blocco con `rrf_scores` è stato rimosso: conteneva
+        # `"dense" not in rrf_scores[id_]` su un float (TypeError appena
+        # la KB non è vuota) e il suo valore non era mai usato.
         rrf_raw = {}
         for rank, item in enumerate(dense_results, start=1):
             id_ = item["id"]
@@ -214,13 +210,23 @@ class VectorStore:
         for id_, data in sorted_items:
             dense_item = data.get("dense") or {}
             keyword_item = data.get("keyword", {})
+            metadata = dense_item.get("metadata") or {}
+            if not metadata:
+                # Chunk trovato solo via BM25: recupera i metadati da ChromaDB
+                # così le fonti mostrano documento e posizione corretti.
+                try:
+                    got = self._collection.get(ids=[id_], include=["metadatas"])
+                    if got and got.get("metadatas") and got["metadatas"][0]:
+                        metadata = got["metadatas"][0]
+                except Exception:
+                    pass
             results.append({
                 "id": id_,
                 "text": dense_item.get("text") or keyword_item.get("text", ""),
                 "dense_score": dense_item.get("score", 0),
                 "keyword_score": keyword_item.get("score", 0),
                 "rrf_score": data["score"],
-                "metadata": dense_item.get("metadata", {}),
+                "metadata": metadata,
             })
 
         return results

@@ -20,9 +20,13 @@ function Bar({ value, max = 100, label, valueLabel, warnAt = 70, critAt = 90 }) 
 export default function Monitor() {
   const [m, setM] = useState(null)
   const [services, setServices] = useState(null)
+  // Stato dei modelli LLM dalla stessa fonte della pagina Modelli (/api/models/catalog)
+  const [modelStatus, setModelStatus] = useState(null)
+  const [modelsLoaded, setModelsLoaded] = useState(false)
 
   useEffect(() => {
     let interval
+    let modelsInterval
     async function fetchMetrics() {
       try {
         const res = await fetch('/api/system/metrics')
@@ -35,10 +39,35 @@ export default function Monitor() {
         if (res.ok) setServices(await res.json())
       } catch {}
     }
+    // Stato del modello attivo: scaricato, in linea (caricato in memoria), keep-alive
+    async function fetchModelStatus() {
+      try {
+        const res = await fetch('/api/models/catalog')
+        if (!res.ok) throw new Error()
+        const data = await res.json()
+        const models = Array.isArray(data.models) ? data.models : []
+        const active = models.find(mo => mo.active) || null
+        setModelStatus({
+          reachable: data.reachable ?? false,
+          activeModel: data.active_model || null,
+          activeLabel: active?.label || null,
+          online: Boolean(active?.online),
+          downloaded: Boolean(active?.downloaded),
+          keepAlive: data.keep_alive || null,
+          onlineCount: models.filter(mo => mo.online).length,
+        })
+      } catch {
+        setModelStatus(null)
+      } finally {
+        setModelsLoaded(true)
+      }
+    }
     fetchMetrics()
     fetchServices()
+    fetchModelStatus()
     interval = setInterval(() => { fetchMetrics(); fetchServices() }, 3000)
-    return () => clearInterval(interval)
+    modelsInterval = setInterval(fetchModelStatus, 6000)
+    return () => { clearInterval(interval); clearInterval(modelsInterval) }
   }, [])
 
   if (!m) {
@@ -65,8 +94,51 @@ export default function Monitor() {
           )}
         </div>
         <div className="monitor-card animate-slide-up stagger-2">
-          <h3><Gauge size={14} /> Prestazioni LLM</h3>
-          <Bar value={10} max={20} label="Throughput" valueLabel={`${m.active_model}`} />
+          <h3><Gauge size={14} /> Modello LLM</h3>
+          {!modelsLoaded ? null : !modelStatus ? (
+            <p style={{ color: 'var(--text-muted)', fontSize: 'var(--text-sm)' }}>
+              Stato modelli non disponibile
+            </p>
+          ) : (
+            <>
+              <div className="monitor-service-item">
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ color: modelStatus.reachable
+                    ? (modelStatus.online ? 'var(--jeeg-green)' : 'var(--jeeg-blue)')
+                    : 'var(--jeeg-red)' }}>●</span>
+                  Modello attivo
+                </span>
+                {modelStatus.reachable ? (
+                  <span className={`badge ${modelStatus.online ? 'badge-ok' : modelStatus.downloaded ? 'badge-info' : 'badge-warn'}`}>
+                    <span className="badge-dot" aria-hidden="true" />
+                    {modelStatus.online ? 'In linea' : modelStatus.downloaded ? 'Pronto' : 'Non scaricato'}
+                  </span>
+                ) : (
+                  <span className="badge badge-error"><span className="badge-dot" aria-hidden="true" />Ollama offline</span>
+                )}
+              </div>
+              <div className="monitor-service-item">
+                <span style={{ color: 'var(--text-muted)' }}>Nome</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)' }} title={modelStatus.activeLabel || modelStatus.activeModel || ''}>
+                  {modelStatus.activeLabel || modelStatus.activeModel || '—'}
+                </span>
+              </div>
+              <div className="monitor-service-item">
+                <span style={{ color: 'var(--text-muted)' }}>Modelli in linea</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)' }}>
+                  {modelStatus.onlineCount}
+                </span>
+              </div>
+              {modelStatus.keepAlive && (
+                <div className="monitor-service-item">
+                  <span style={{ color: 'var(--text-muted)' }}>Keep alive</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)' }}>
+                    {modelStatus.keepAlive}
+                  </span>
+                </div>
+              )}
+            </>
+          )}
         </div>
         <div className="monitor-card animate-slide-up stagger-3">
           <h3><MemoryStick size={14} /> Stato Retrieval</h3>

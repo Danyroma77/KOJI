@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Send, Settings } from 'lucide-react'
 
 export default function RAG() {
@@ -7,21 +8,29 @@ export default function RAG() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [sources, setSources] = useState([])
   const [metrics, setMetrics] = useState({ tokPerSec: '—', ttft: '—' })
-  const [selectedModel, setSelectedModel] = useState('')
-  const [models, setModels] = useState([])
+  const [activeModel, setActiveModel] = useState(null)
   const messagesEndRef = useRef(null)
+  const navigate = useNavigate()
 
-  // Carica modelli disponibili
+  // Modello attivo (sola lettura): la scelta avviene nella pagina Modelli.
+  // Polling leggero per riflettere eventuali cambi fatti altrove.
   useEffect(() => {
-    fetch('/api/models')
-      .then(r => r.json())
-      .then(data => {
-        setModels(data)
-        if (data.length > 0 && !selectedModel) {
-          setSelectedModel(data[0].name)
-        }
-      })
-      .catch(() => {})
+    let cancelled = false
+    async function loadActiveModel() {
+      try {
+        const res = await fetch('/api/models/active')
+        const data = await res.json()
+        if (!cancelled) setActiveModel(data?.model || null)
+      } catch {
+        if (!cancelled) setActiveModel(null)
+      }
+    }
+    loadActiveModel()
+    const id = setInterval(loadActiveModel, 6000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
   }, [])
 
   // Auto-scroll
@@ -46,10 +55,9 @@ export default function RAG() {
       const res = await fetch('/api/rag/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question,
-          model: selectedModel || undefined,
-        }),
+        // Nessun modello esplicito: il backend usa automaticamente
+        // il modello attivo selezionato dalla pagina dedicata ai modelli.
+        body: JSON.stringify({ question }),
       })
 
       if (!res.ok) {
@@ -132,22 +140,21 @@ export default function RAG() {
         <p className="rag-epistemology" role="note">
           Ogni risposta è costruita dalle evidenze disponibili
         </p>
+        {/* Il modello si sceglie nella pagina dedicata (icona a rondella): qui è solo indicato */}
         <div className="rag-controls">
-          <label htmlFor="rag-model-select" className="sr-only">Seleziona modello</label>
-          <select
-            id="rag-model-select"
-            className="rag-select"
-            value={selectedModel}
-            onChange={e => setSelectedModel(e.target.value)}
+          <span
+            className={`badge ${activeModel ? 'badge-ok' : 'badge-warn'}`}
+            title={activeModel ? `Modello attivo: ${activeModel}` : 'Nessun modello attivo — selezionalo nella pagina Modelli'}
           >
-            {models.length === 0 && <option>Caricamento modelli...</option>}
-            {models.map(m => (
-              <option key={m.name} value={m.name}>
-                {m.name} {m.size_bytes ? `(${(m.size_bytes / 1e9).toFixed(1)} GB)` : ''}
-              </option>
-            ))}
-          </select>
-          <button className="navbar-btn" aria-label="Parametri di generazione">
+            <span className="badge-dot" aria-hidden="true" />
+            {activeModel || 'Nessun modello'}
+          </span>
+          <button
+            className="navbar-btn"
+            onClick={() => navigate('/models')}
+            aria-label="Vai alla pagina dei modelli"
+            title="Gestione dei modelli"
+          >
             <Settings size={16} />
           </button>
         </div>

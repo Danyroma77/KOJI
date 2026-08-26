@@ -107,7 +107,10 @@ class DOCXParser(BaseParser):
     """Parser per documenti Word (.docx)."""
 
     def parse(self, file_bytes: bytes, filename: str) -> ParseResult:
-        doc = Document(file_bytes)
+        # python-docx richiede un file-like object, non bytes grezzi
+        # ('bytes' object has no attribute 'seek')
+        from io import BytesIO
+        doc = Document(BytesIO(file_bytes))
 
         paragraphs = []
         for para in doc.paragraphs:

@@ -86,6 +86,37 @@ class DocumentListResponse(BaseModel):
     total_chunks: int
 
 
+# === Attività (cronologia KB) ===
+
+class ActivityAction(str, Enum):
+    """Tipologia di modifica tracciata nella cronologia attività."""
+    UPLOADED = "uploaded"
+    MODIFIED = "modified"
+    DELETED = "deleted"
+    PARSING = "parsing"
+    NORMALIZING = "normalizing"
+    CHUNKING = "chunking"
+    EMBEDDING = "embedding"
+    READY = "ready"
+    ERROR = "error"
+
+
+class ActivityEntry(BaseModel):
+    """Voce della cronologia attività."""
+    id: str
+    action: ActivityAction
+    doc_id: Optional[str] = None
+    filename: str
+    timestamp: str
+    detail: Optional[str] = None
+
+
+class ActivityListResponse(BaseModel):
+    """Cronologia delle attività recenti."""
+    activities: list[ActivityEntry]
+    total: int
+
+
 # === RAG ===
 
 class RAGQuery(BaseModel):
@@ -176,6 +207,7 @@ class OllamaModelInfo(BaseModel):
     size_bytes: Optional[int] = None
     quantization: Optional[str] = None
     family: Optional[str] = None
+    active: bool = False
 
 
 class ModelLoadRequest(BaseModel):

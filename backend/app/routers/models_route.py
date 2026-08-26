@@ -75,7 +75,12 @@ async def model_catalog() -> CatalogStatusResponse:
             downloaded
             and (raw_name in running_exact or _base_name(raw_name) in running_bases)
         )
-        is_active = raw_name == active or _base_name(raw_name) == active_base
+        # Un modello può essere "attivo" solo se è stato davvero scaricato:
+        # il default di configurazione da solo non basta, altrimenti Phi-3
+        # (mai scaricato) risulterebbe attivo pur non esistendo in Ollama.
+        is_active = downloaded and (
+            raw_name == active or _base_name(raw_name) == active_base
+        )
 
         details = (inst or {}).get("details", {}) if downloaded else {}
         size_bytes = (inst or {}).get("size") if downloaded else meta.get("size_bytes")
@@ -100,7 +105,7 @@ async def model_catalog() -> CatalogStatusResponse:
 
     return CatalogStatusResponse(
         reachable=reachable,
-        active_model=active,
+        active_model=next((m.name for m in models_out if m.active), None),
         keep_alive=settings.OLLAMA_KEEP_ALIVE,
         models=models_out,
     )
@@ -108,20 +113,47 @@ async def model_catalog() -> CatalogStatusResponse:
 
 @router.get("/active")
 async def get_active_model():
-    """Restituisce il modello LLM attualmente attivo."""
-    return {"model": llm_manager.active_model}
+    """Restituisce il modello LLM attualmente attivo.
+
+    Ritorna None se il modello configurato/selezionato non è ancora
+    stato scaricato in Ollama.
+    """
+    want = llm_manager.active_model
+    installed = await llm_manager.installed_names()
+    if want in installed:
+        return {"model": want}
+    want_base = _base_name(want)
+    if any(_base_name(n) == want_base for n in installed):
+        return {"model": want}
+    return {"model": None}
 
 
 @router.post("/select")
 async def select_model(request: ModelSelectRequest):
-    """Seleziona il modello attivo per la generazione RAG."""
+    """Seleziona il modello attivo per la generazione RAG.
+
+    Consente la selezione solo se il modello è già stato scaricato.
+    """
+    installed = await llm_manager.installed_names()
+    ok = request.model in installed or any(
+        _base_name(n) == _base_name(request.model) for n in installed
+    )
+    if not ok:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Modello {request.model} non scaricato: impossibile selezionarlo",
+        )
     llm_manager.set_active_model(request.model)
     return {"status": "ok", "active_model": llm_manager.active_model}
 
 
 @router.get("")
 async def list_models() -> list[OllamaModelInfo]:
-    """Lista modelli scaricati in Ollama (per la selezione in RAG)."""
+    """Lista dei modelli scaricati in Ollama (per la selezione in RAG).
+
+    Ritorna SOLO i modelli già scaricati e segnala con `active` quale è
+    attualmente attivo (ce ne può essere al massimo uno).
+    """
     try:
         models = await llm_manager.list_models()
         return [
@@ -130,6 +162,7 @@ async def list_models() -> list[OllamaModelInfo]:
                 size_bytes=m.get("size"),
                 quantization=m.get("details", {}).get("quantization_level"),
                 family=m.get("details", {}).get("family"),
+                active=llm_manager.is_active(m.get("name", "")),
             )
             for m in models
         ]

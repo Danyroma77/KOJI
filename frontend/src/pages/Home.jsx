@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Upload, MessageSquare, Network, Database, Cpu, FileText, Clock } from 'lucide-react'
+import { listActivities } from '../services/documents'
 
 const SERVICE_MAP = {
   'LLM Runtime': 'ollama',
@@ -12,6 +13,8 @@ const SERVICE_MAP = {
 // Etichette in italiano per la tipologia di modifica mostrata nella tabella attività
 const ACTIVITY_TYPE_MAP = {
   uploaded: { label: 'Caricato', cls: 'badge-info' },
+  modified: { label: 'Modificato', cls: 'badge-warn' },
+  deleted: { label: 'Eliminato', cls: 'badge-error' },
   parsing: { label: 'Analisi', cls: 'badge-warn' },
   normalizing: { label: 'Normalizzazione', cls: 'badge-warn' },
   chunking: { label: 'Suddivisione in chunk', cls: 'badge-warn' },
@@ -50,12 +53,13 @@ export default function Home() {
     }
   }, [])
 
-  // --- Metriche + documenti ---
+  // --- Metriche + documenti + cronologia attività ---
   const fetchData = useCallback(async () => {
     try {
-      const [metricsRes, docsRes] = await Promise.all([
+      const [metricsRes, docsRes, activitiesRes] = await Promise.all([
         fetch('/api/system/metrics'),
         fetch('/api/documents'),
+        listActivities(20).catch(() => null),
       ])
 
       if (metricsRes.ok) {
@@ -65,33 +69,29 @@ export default function Home() {
       if (docsRes.ok) {
         const data = await docsRes.json()
         setDocs(data.documents)
+      }
 
-        // Costruisci attività dai documenti più recenti
-        const recent = data.documents
-          .slice()
-          .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''))
-          .slice(0, 6)
-          .map(doc => {
-            const dateTime = doc.updated_at
-              ? new Date(doc.updated_at).toLocaleString('it-IT', {
-                  day: '2-digit', month: '2-digit', year: 'numeric',
-                  hour: '2-digit', minute: '2-digit',
-                })
-              : '—'
-            const type = ACTIVITY_TYPE_MAP[doc.status] || { label: doc.status || 'Sconosciuto', cls: 'badge-info' }
-            const detail = doc.status === 'ready'
-              ? `${doc.chunks_count ?? 0} chunk`
-              : doc.status === 'error'
-                ? (doc.error_message || 'errore sconosciuto').slice(0, 60)
-                : ''
-            return {
-              dateTime,
-              filename: doc.filename,
-              type,
-              detail,
-              status: doc.status,
-            }
-          })
+      // Cronologia attività dal log persistente: oltre a upload e indicizzazione
+      // include le modifiche (sovrascrittura di un file) e le eliminazioni,
+      // che altrimenti sparirebbero insieme al documento dal catalogo.
+      if (activitiesRes && activitiesRes.ok) {
+        const data = await activitiesRes.json()
+        const recent = (data.activities || []).map(a => {
+          const dateTime = a.timestamp
+            ? new Date(a.timestamp).toLocaleString('it-IT', {
+                day: '2-digit', month: '2-digit', year: 'numeric',
+                hour: '2-digit', minute: '2-digit',
+              })
+            : '—'
+          const type = ACTIVITY_TYPE_MAP[a.action] || { label: a.action || 'Sconosciuto', cls: 'badge-info' }
+          return {
+            dateTime,
+            filename: a.filename,
+            type,
+            detail: a.detail || '',
+            status: a.action,
+          }
+        })
         setActivities(recent)
       }
     } catch {
@@ -122,7 +122,7 @@ export default function Home() {
     ? `${metrics.ram_used_gb.toFixed(1)} / ${metrics.ram_total_gb.toFixed(1)} GB`
     : '— / — GB'
   const cpuDisplay = metrics ? `${metrics.cpu_percent.toFixed(0)}%` : '—%'
-  const tokDisplay = metrics ? `${metrics.active_model}` : '—'
+  const tokDisplay = metrics ? (metrics.active_model || '—') : '—'
 
   // Tutti i servizi ok?
   const allOk = Object.values(serviceStates).every(s => s === 'ok')

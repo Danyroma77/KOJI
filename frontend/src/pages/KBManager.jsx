@@ -4,7 +4,7 @@ import {
   Upload, Download, Trash2, FileText, FileCode,
   FileArchive, X, AlertCircle, CheckCircle, RefreshCw, Eye
 } from 'lucide-react'
-import { uploadDocuments, listDocuments, deleteDocument, downloadDocument, STATUS_MAP } from '../services/documents'
+import { uploadDocuments, listDocuments, deleteDocument, deleteAllDocuments, downloadDocument, STATUS_MAP } from '../services/documents'
 
 const FORMAT_ICONS = {
   pdf: FileText,
@@ -28,6 +28,7 @@ export default function KBManager() {
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const [message, setMessage] = useState(null)
   const [messageType, setMessageType] = useState('info')
   const fileInputRef = useRef(null)
@@ -139,6 +140,28 @@ export default function KBManager() {
     })
   }
 
+  function handleClearAll() {
+    var n = docs.length
+    if (n === 0) {
+      showMsg('La Knowledge Base è già vuota', 'info')
+      return
+    }
+    var msg = 'Svuotare la Knowledge Base? Verranno eliminati TUTTI i ' + n +
+      ' documenti con i loro chunk, embedding e pagine wiki. Operazione irreversibile.'
+    if (!confirm(msg)) return
+    setClearing(true)
+    deleteAllDocuments().then(function(result) {
+      showMsg('KB svuotata: ' + String(result.removed) + ' documento/i rimossi', 'success')
+      setViewingDoc(null)
+      fetchDocs()
+    }).catch(function(err) {
+      console.error(err)
+      showMsg(String(err.message), 'error')
+    }).finally(function() {
+      setClearing(false)
+    })
+  }
+
   async function handleDownload(docId) {
     downloadDocument(docId).catch(function(err) {
       console.error(err)
@@ -198,7 +221,7 @@ export default function KBManager() {
   }
 
   return (
-    <div className="animate-fade-in" aria-label="Knowledge Base Manager">
+    <div className="animate-fade-in kb-page" aria-label="Knowledge Base Manager">
       <div className="kb-header">
         <h2>Knowledge Base</h2>
         <p className="motto">La conoscenza non viene derivata, viene organizzata</p>
@@ -250,7 +273,10 @@ export default function KBManager() {
         />
       </div>
 
-      <div className="kb-toolbar">
+      <div
+        className="kb-toolbar"
+        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-sm)', flexWrap: 'wrap' }}
+      >
         <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
           <label htmlFor="kb-filter" className="sr-only">Filtra per stato</label>
           <select id="kb-filter" className="rag-select" aria-label="Filtra documenti per stato">
@@ -268,6 +294,17 @@ export default function KBManager() {
             Aggiorna
           </button>
         </div>
+        <button
+          className="admin-btn admin-btn-secondary kb-clear-btn"
+          style={{ fontSize: 'var(--text-xs)', padding: '6px 12px', color: 'var(--jeeg-red)' }}
+          onClick={handleClearAll}
+          disabled={clearing || docs.length === 0}
+          title="Elimina tutti i documenti dalla Knowledge Base"
+          aria-label="Svuota la Knowledge Base"
+        >
+          <Trash2 size={12} style={{ verticalAlign: '-2px', marginRight: '4px' }} />
+          {clearing ? 'Svuotamento...' : 'Svuota KB'}
+        </button>
       </div>
 
       <div className="kb-table-layout">

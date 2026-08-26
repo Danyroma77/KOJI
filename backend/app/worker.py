@@ -37,9 +37,10 @@ def process_document_job(job):
     from app.services.embedding_service import embedding_service
     from app.services.vector_store import vector_store
     from app.services.job_queue import job_queue
+    from app.services.activity_log import activity_log
     from app.config import settings
-    from app.routers.documents import _load_catalog, _save_catalog
-    from app.models import DocumentStatus, DocumentTechMeta, DocumentMetadata
+    from app.routers.documents import _load_catalog, _save_catalog, _get_format
+    from app.models import DocumentStatus, DocumentTechMeta, DocumentMetadata, ActivityAction
     from pathlib import Path
     from datetime import datetime
 
@@ -48,6 +49,14 @@ def process_document_job(job):
     raw_path = Path(job.payload["raw_path"])
 
     catalog = _load_catalog()
+
+    # Il documento può essere stato eliminato mentre il job era in coda:
+    # in tal caso si salta il processing senza segnare un errore fittizio
+    # nella cronologia delle attività.
+    if not any(d["id"] == doc_id for d in catalog["documents"]):
+        logger.info("[%s] SALTATO: %s eliminato prima del processing", job.id, filename)
+        return {"skipped": True, "filename": filename}
+
     total_steps = 5
 
     def update_progress(step, sub=0):
@@ -70,7 +79,9 @@ def process_document_job(job):
         tech_meta = DocumentTechMeta(
             sha256=sha256,
             size_bytes=len(file_bytes),
-            format=Path(filename).suffix.lower().replace(".", "").upper(),
+            # Usa l'enum DocumentFormat: una stringa tipo 'MD' verrebbe
+            # rifiutata dalla validazione pydantic e fallirebbe tutto il job.
+            format=_get_format(filename),
             upload_timestamp=datetime.now().isoformat(),
         )
         struct_meta = DocumentMetadata(
@@ -113,6 +124,12 @@ def process_document_job(job):
                 break
         _save_catalog(catalog)
 
+        # Traccia l'esito positivo del processing nella cronologia attività
+        activity_log.log(
+            ActivityAction.READY, filename, doc_id,
+            detail=f"{len(chunks)} chunk",
+        )
+
         logger.info("[%s] COMPLETATO: %s -> %d chunk", job.id, filename, len(chunks))
         return {"chunks": len(chunks), "filename": filename}
 
@@ -125,6 +142,9 @@ def process_document_job(job):
                 doc["updated_at"] = datetime.now().isoformat()
                 break
         _save_catalog(catalog)
+
+        # Traccia il fallimento nella cronologia attività
+        activity_log.log(ActivityAction.ERROR, filename, doc_id, detail=str(e)[:80])
         raise
 
 

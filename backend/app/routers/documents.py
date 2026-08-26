@@ -8,16 +8,18 @@ import json
 import uuid
 import asyncio
 import os
+import logging
 from pathlib import Path
 from datetime import datetime
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Query
 from fastapi.responses import FileResponse
 
 from app.config import settings
 from app.models import (
     DocumentUploadResponse, DocumentCatalogEntry, DocumentListResponse,
     DocumentStatus, DocumentFormat, DocumentMetadata, DocumentTechMeta,
+    ActivityAction, ActivityEntry, ActivityListResponse,
 )
 from app.services.document_parser import parse_document, compute_sha256, get_parser
 from app.services.text_normalizer import normalizer
@@ -26,6 +28,9 @@ from app.services.embedding_service import embedding_service
 from app.services.vector_store import vector_store
 from app.services.graph_builder import graph_builder
 from app.services.wiki_generator import wiki_generator
+from app.services.activity_log import activity_log
+
+logger = logging.getLogger("koji")
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -53,6 +58,18 @@ def _get_format(filename: str) -> DocumentFormat:
         return DocumentFormat(ext)
     except ValueError:
         return DocumentFormat.TEXT
+
+
+def _remove_document_artifacts(doc_id: str):
+    """Rimuove tutti gli artefatti di un documento: vettori, nodi grafo,
+    file raw e file processed. Non tocca il catalogo."""
+    vector_store.delete_by_doc(doc_id)
+    graph_builder.remove_by_doc(doc_id)
+    for f in settings.RAW_DIR.glob(f"{doc_id}_*"):
+        f.unlink()
+    processed = settings.PROCESSED_DIR / f"{doc_id}.md"
+    if processed.exists():
+        processed.unlink()
 
 
 async def _process_document(doc_id: str, filename: str, file_bytes: bytes, catalog: dict):
@@ -158,6 +175,23 @@ async def upload_documents(
             file_bytes = await file.read()
             doc_id = str(uuid.uuid4())[:8]
 
+            # Modifica: se un documento con lo stesso nome esiste già, la nuova
+            # versione lo sostituisce (artefatti della vecchia versione rimossi)
+            # e l'attività viene tracciata come "modified" invece di "uploaded".
+            existing = next(
+                (d for d in catalog["documents"] if d.get("filename") == filename),
+                None,
+            )
+            if existing:
+                existing_id = existing.get("id")
+                _remove_document_artifacts(existing_id)
+                catalog["documents"] = [
+                    d for d in catalog["documents"] if d.get("id") != existing_id
+                ]
+                activity_log.log(ActivityAction.MODIFIED, filename, doc_id)
+            else:
+                activity_log.log(ActivityAction.UPLOADED, filename, doc_id)
+
             # Salva file raw
             raw_path = settings.RAW_DIR / f"{doc_id}_{filename}"
             raw_path.write_bytes(file_bytes)
@@ -209,6 +243,68 @@ async def list_documents():
     )
 
 
+@router.get("/activities", response_model=ActivityListResponse)
+async def list_activities(limit: int = Query(default=20, ge=1, le=50)):
+    """Cronologia delle attività sulla KB.
+
+    Traccia oltre agli upload anche le modifiche (sovrascrittura di un file
+    esistente) e le eliminazioni — eventi che altrimenti sparirebbero dal
+    catalogo. Al primo avvio popola il log dai documenti già presenti.
+    """
+    # Nota: la route è dichiarata prima di /{doc_id} per evitare che
+    # "activities" venga interpretato come un id documento.
+    catalog = _load_catalog()
+    activity_log.seed_from_catalog(catalog["documents"])
+    entries = activity_log.list_recent(limit=limit)
+    return ActivityListResponse(
+        activities=[ActivityEntry(**e) for e in entries],
+        total=len(entries),
+    )
+
+
+@router.delete("/all")
+async def delete_all_documents(background_tasks: BackgroundTasks):
+    """Svuota la Knowledge Base: elimina tutti i documenti con i loro artefatti.
+
+    Ogni rimozione viene tracciata nella cronologia attività (azione 'deleted'),
+    i job ancora in coda vengono annullati e la wiki viene rigenerata vuota.
+    Nota: la route è dichiarata prima di /{doc_id} per evitare che 'all'
+    venga interpretato come un id documento.
+    """
+    from app.services.job_queue import job_queue
+
+    catalog = _load_catalog()
+    docs = list(catalog["documents"])
+
+    # Traccia le eliminazioni PRIMA di svuotare il catalogo: dopo non sarebbe
+    # più possibile recuperare nome file e id di ciascun documento.
+    for d in docs:
+        activity_log.log(
+            ActivityAction.DELETED,
+            d.get("filename") or "documento",
+            d.get("id"),
+        )
+
+    for d in docs:
+        doc_id = d.get("id")
+        if not doc_id:
+            continue
+        _remove_document_artifacts(doc_id)
+        job_queue.cancel_pending_for_doc(doc_id)
+
+    catalog["documents"] = []
+    _save_catalog(catalog)
+
+    # Rigenera la wiki in background (con la KB vuota la resetta)
+    background_tasks.add_task(_regenerate_wiki, catalog)
+
+    return {
+        "status": "ok",
+        "removed": len(docs),
+        "message": f"Rimossi {len(docs)} documenti dalla KB",
+    }
+
+
 @router.delete("/{doc_id}")
 async def delete_document(doc_id: str, background_tasks: BackgroundTasks):
     """Elimina un documento e tutti i suoi chunk, embedding, nodi grafo e pagine wiki."""
@@ -220,20 +316,18 @@ async def delete_document(doc_id: str, background_tasks: BackgroundTasks):
 
     filename = doc_entry["filename"]
 
-    # Rimuovi dal vector store
-    vector_store.delete_by_doc(doc_id)
+    # Traccia l'eliminazione PRIMA di rimuovere la voce dal catalogo,
+    # altrimenti l'evento sarebbe perduto insieme al documento.
+    activity_log.log(ActivityAction.DELETED, filename, doc_id)
 
-    # Rimuovi dal grafo
-    graph_builder.remove_by_doc(doc_id)
+    # Rimuovi artefatti: vettori, grafo, file raw e processed
+    _remove_document_artifacts(doc_id)
 
-    # Rimuovi file raw
-    for f in settings.RAW_DIR.glob(f"{doc_id}_*"):
-        f.unlink()
-
-    # Rimuovi file processed
-    processed = settings.PROCESSED_DIR / f"{doc_id}.md"
-    if processed.exists():
-        processed.unlink()
+    # Annulla eventuali job ancora in coda per questo documento: senza questa
+    # tutela il worker processerebbe un file eliminato registrando un errore
+    # fittizio nella cronologia delle attività.
+    from app.services.job_queue import job_queue
+    job_queue.cancel_pending_for_doc(doc_id)
 
     # Rimuovi dal catalogo
     catalog["documents"] = [d for d in catalog["documents"] if d["id"] != doc_id]

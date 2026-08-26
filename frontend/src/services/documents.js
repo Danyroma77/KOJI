@@ -36,6 +36,19 @@ export async function deleteDocument(docId) {
   return res.json()
 }
 
+/**
+ * Svuota interamente la Knowledge Base: rimuove tutti i documenti
+ * con i loro chunk, embedding, nodi del grafo e pagine wiki.
+ */
+export async function deleteAllDocuments() {
+  const res = await fetch(`${API_BASE}/all`, { method: 'DELETE' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `Errore svuotamento KB: ${res.status}`)
+  }
+  return res.json()
+}
+
 export async function downloadDocument(docId) {
   const res = await fetch(`${API_BASE}/${docId}/download`)
   if (!res.ok) throw new Error(`Errore download: ${res.status}`)
@@ -61,6 +74,17 @@ export async function downloadDocument(docId) {
 export async function listJobs() {
   const res = await fetch(`${API_BASE}/jobs`)
   if (!res.ok) return []
+  return res.json()
+}
+
+/**
+ * Cronologia delle attività sulla KB.
+ * Include upload, modifiche (sovrascrittura file esistente), eliminazioni
+ * ed esiti del processing (indicizzato / errore).
+ */
+export async function listActivities(limit = 20) {
+  const res = await fetch(`${API_BASE}/activities?limit=${limit}`)
+  if (!res.ok) throw new Error(`Errore attività: ${res.status}`)
   return res.json()
 }
 

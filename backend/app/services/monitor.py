@@ -31,6 +31,19 @@ async def get_system_metrics() -> dict:
 
     # Stato servizi
     ollama_ok = await llm_manager.check_health()
+
+    # Modello attivo SOLO se è davvero installato in Ollama.
+    # Il default di config (phi3:3.8b) da solo non basta: senza modello
+    # scaricato non esiste un LLM realmente "attivo".
+    active_model = None
+    if ollama_ok:
+        want = llm_manager.active_model
+        installed = await llm_manager.installed_names()
+        want_base = (want or "").split(":", 1)[0].lower()
+        installed_bases = {n.split(":", 1)[0].lower() for n in installed}
+        if want in installed or want_base in installed_bases:
+            active_model = want
+
     chroma_ok = True
     try:
         vector_store.initialize()
@@ -67,7 +80,7 @@ async def get_system_metrics() -> dict:
         "file_store_ready": file_store_ok,
         "total_documents": total_docs,
         "total_chunks": total_chunks,
-        "active_model": llm_manager.active_model,
+        "active_model": active_model,
     }
 
 
