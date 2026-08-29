@@ -8,6 +8,7 @@ import logging
 import time
 import signal
 import sys
+from datetime import datetime
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,7 +43,6 @@ def process_document_job(job):
     from app.routers.documents import _load_catalog, _save_catalog, _get_format
     from app.models import DocumentStatus, DocumentTechMeta, DocumentMetadata, ActivityAction
     from pathlib import Path
-    from datetime import datetime
 
     doc_id = job.payload["doc_id"]
     filename = job.payload["filename"]
@@ -204,7 +204,7 @@ def generate_graph_job(job):
     from app.services.job_queue import job_queue
     from app.services.activity_log import activity_log
     from app.routers.documents import _load_catalog, _save_catalog
-    from app.models import ActivityAction
+    from app.models import ActivityAction, DocumentStatus
 
     doc_id = job.payload["doc_id"]
     filename = job.payload.get("filename", "documento")
@@ -253,6 +253,16 @@ def generate_graph_job(job):
 
     except Exception as e:
         logger.error("[%s] FALLITO (grafo): %s — %s", job.id, filename, e)
+        # Il documento non resta "Pronto" se un artefatto derivato è fallito:
+        # stato=error e messaggio visibile nella colonna Errore della tabella KB.
+        catalog = _load_catalog()
+        for d in catalog["documents"]:
+            if d["id"] == doc_id:
+                d["status"] = DocumentStatus.ERROR.value
+                d["error_message"] = f"grafo: {str(e)[:120]}"
+                d["updated_at"] = datetime.now().isoformat()
+                break
+        _save_catalog(catalog)
         activity_log.log(ActivityAction.ERROR, filename, doc_id, detail=f"grafo: {str(e)[:60]}")
         raise
 
@@ -313,6 +323,15 @@ def generate_wiki_job(job):
 
     except Exception as e:
         logger.error("[%s] FALLITO (wiki): %s — %s", job.id, filename, e)
+        # Il documento non resta "Pronto" se un artefatto derivato è fallito.
+        catalog = _load_catalog()
+        for d in catalog["documents"]:
+            if d["id"] == doc_id:
+                d["status"] = DocumentStatus.ERROR.value
+                d["error_message"] = f"wiki: {str(e)[:120]}"
+                d["updated_at"] = datetime.now().isoformat()
+                break
+        _save_catalog(catalog)
         activity_log.log(ActivityAction.ERROR, filename, doc_id, detail=f"wiki: {str(e)[:60]}")
         raise
 

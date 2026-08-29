@@ -75,9 +75,7 @@ async def model_catalog() -> CatalogStatusResponse:
             downloaded
             and (raw_name in running_exact or _base_name(raw_name) in running_bases)
         )
-        # Un modello può essere "attivo" solo se è stato davvero scaricato:
-        # il default di configurazione da solo non basta, altrimenti Phi-3
-        # (mai scaricato) risulterebbe attivo pur non esistendo in Ollama.
+      
         is_active = downloaded and (
             raw_name == active or _base_name(raw_name) == active_base
         )
@@ -90,7 +88,7 @@ async def model_catalog() -> CatalogStatusResponse:
                 name=raw_name,
                 label=meta.get("label") or raw_name,
                 family=meta.get("family") or details.get("family"),
-                description=meta.get("description"),
+                
                 size_bytes=size_bytes,
                 quantization=(
                     details.get("quantization_level")

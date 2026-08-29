@@ -147,15 +147,7 @@ export default function Models() {
                   {formatSize(model.size_bytes) && ` · ${formatSize(model.size_bytes)}`}
                   {model.quantization && ` · ${model.quantization}`}
                 </div>
-                {model.description && <div className="model-description">{model.description}</div>}
-                {isPulling && (
-                  <div className="model-progress">
-                    <div className="model-progress-track">
-                      <div className="model-progress-fill" style={{ width: `${Math.round((prog ? prog.progress : 0) * 100)}%` }} />
-                    </div>
-                    {prog && prog.message && <span className="model-progress-text">{prog.message}</span>}
-                  </div>
-                )}
+
               </div>
 
               <div className="model-actions">

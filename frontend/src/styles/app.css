@@ -442,7 +442,7 @@
 
 .rag-epistemology {
   font-size: var(--text-sm);
-  color: white;
+  color: var(--text-primary);
   font-style: italic;
   padding: var(--space-sm) var(--space-md);
   background: var(--bg-surface);
@@ -765,7 +765,7 @@
 }
 
 .graph-page-header p {
-  color: white;
+  color: var(--text-primary);
   font-size: var(--text-sm);
   font-style: italic;
 }
@@ -1165,7 +1165,7 @@
 }
 
 .wiki-header p {
-  color: white;
+  color: var(--text-primary);
   font-size: var(--text-sm);
   font-style: italic;
 }
@@ -1388,7 +1388,7 @@
 }
 
 .kb-header .kb-motto {
-  color: white;
+  color: var(--text-primary);
   font-size: var(--text-sm);
   font-style: italic;
 }
@@ -1483,15 +1483,6 @@
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   overflow: hidden;
-}
-
-.kb-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.kb-table thead {
-  background: var(--bg-surface);
 }
 
 .kb-table {
@@ -1725,13 +1716,7 @@
   box-shadow: 0 0 8px rgba(0, 168, 89, 0.15);
 }
 
-/* Descrizione del modello */
-.model-description {
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-  margin-top: 2px;
-  line-height: 1.5;
-}
+
 
 /* Avanzamento dello scaricamento (pull) di un modello */
 .model-progress {
@@ -2260,7 +2245,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-md) var(--lg);
+  padding: var(--space-md) var(--space-lg);
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
@@ -2321,7 +2306,7 @@
 .kb-viewer-body {
   flex: 1;
   overflow-y: auto;
-  padding: var(--lg);
+  padding: var(--space-lg);
   margin: 0;
 }
 
@@ -2431,4 +2416,15 @@
 .activity-pager-btns {
   display: flex;
   gap: var(--space-xs);
+}
+
+/* Colonna errore della tabella KB: messaggio troncato su una riga,
+   completo nel tooltip */
+.kb-error-cell {
+  font-size: var(--text-xs);
+  color: var(--jeeg-red);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

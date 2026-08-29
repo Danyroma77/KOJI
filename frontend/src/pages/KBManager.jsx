@@ -530,6 +530,7 @@ export default function KBManager() {
                   <th scope="col" style={{ width: '40%' }}>Nome</th>
                   <th scope="col" style={{ width: '70px' }}>Tipo</th>
                   <th scope="col" style={{ width: '120px' }}>Stato</th>
+                  <th scope="col" style={{ width: '180px' }}>Errore</th>
                   <th scope="col" style={{ width: '70px' }}>Chunk</th>
                   <th scope="col" style={{ width: '100px' }}>Aggiornato</th>
                   <th scope="col" style={{ width: '140px' }}>Azioni</th>
@@ -548,9 +549,6 @@ export default function KBManager() {
                           color: 'var(--jeeg-green)',
                         }} aria-hidden="true" />
                         <span>{doc.filename}</span>
-                        {doc.error_message && (
-                          <span className="doc-error-tip" title={doc.error_message}> ATTENZIONE</span>
-                        )}
                       </td>
                       <td><span className="format-badge">{doc.format || 'N/D'}</span></td>
                       <td>
@@ -560,6 +558,14 @@ export default function KBManager() {
                           <span className="badge-dot" aria-hidden="true" />
                           {st.icon} {st.label}
                         </span>
+                      </td>
+                      <td className="kb-error-cell" title={doc.error_message || undefined}>
+                        {doc.error_message ? (
+                          <>
+                            <AlertCircle size={13} style={{ flexShrink: 0, marginRight: 5, verticalAlign: '-2px', color: 'var(--jeeg-red)' }} aria-hidden="true" />
+                            {doc.error_message}
+                          </>
+                        ) : '—'}
                       </td>
                       <td style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)', textAlign: 'center' }}>
                         {doc.chunks_count != null ? doc.chunks_count : '—'}

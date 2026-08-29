@@ -9,10 +9,8 @@ export default function Graph() {
   const [selectedNode, setSelectedNode] = useState(null)
   const [activeTab, setActiveTab] = useState('storytelling')
   const [nodeDetail, setNodeDetail] = useState(null)
-  const [filters, setFilters] = useState({
-    Persona: true, Organizzazione: true, Procedura: true,
-    Documento: true, Luogo: true, Concetto: true,
-  })
+  const [filters, setFilters] = useState({})
+  const [typeColors, setTypeColors] = useState({})
   const [searchTerm, setSearchTerm] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -77,10 +75,16 @@ export default function Graph() {
           userZoomingEnabled: true, userPanningEnabled: true, boxSelectionEnabled: false,
         })
 
-        const TYPE_COLORS = { Organizzazione: '#00A859', Procedura: '#F5A623', Persona: '#3B9EFF', Documento: '#A78BFA', Luogo: '#FF6B6B', Concetto: '#9CA3AF' }
+        // Tipi e colori derivati dai dati del grafo: nessuna tassonomia predefinita
+        const PALETTE = ['#00A859', '#2E86DE', '#E67E22', '#9B59B6', '#E74C3C',
+          '#16A085', '#F1C40F', '#7F8C8D', '#34495E', '#D35400']
+        const types = [...new Set(data.nodes.map(n => n.type || 'Non classificato'))]
+        const typeColors = {}
+        types.forEach((t, i) => { typeColors[t] = PALETTE[i % PALETTE.length] })
+        setTypeColors(typeColors)
+        setFilters(Object.fromEntries(types.map(t => [t, true])))
         cy.nodes().forEach(node => {
-          const type = node.data('type')
-          node.data('typeColor', TYPE_COLORS[type] || '#6B7A8D')
+          node.data('typeColor', typeColors[node.data('type')] || '#6B7A8D')
         })
         cy.style().update()
 
@@ -180,8 +184,6 @@ export default function Graph() {
     return n ? { id: n.id(), label: n.data('label'), type: n.data('type') } : null
   })() : null)
 
-  const TYPE_COLORS = { Organizzazione: '#00A859', Procedura: '#F5A623', Persona: '#3B9EFF', Documento: '#A78BFA', Luogo: '#FF6B6B', Concetto: '#9CA3AF' }
-
   return (
     <div className="animate-fade-in" aria-label="Knowledge Graph">
       <div className="graph-page-header">
@@ -194,11 +196,11 @@ export default function Graph() {
           <h3>Filtri</h3>
           <div className="graph-filter-group">
             <span className="graph-filter-label">Tipo entità</span>
-            {Object.entries(TYPE_COLORS).map(([type, color]) => (
+            {Object.entries(typeColors).map(([type, color]) => (
               <label key={type} className="graph-checkbox">
                 <input type="checkbox" checked={filters[type] !== false}
                   onChange={e => setFilters(prev => ({ ...prev, [type]: e.target.checked }))} />
-                <span style={{ color }}>{type}</span>
+                <span style={{ color: typeColors[type] }}>{type}</span>
               </label>
             ))}
           </div>

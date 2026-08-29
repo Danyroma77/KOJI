@@ -36,9 +36,9 @@
 
   /* === Testo === */
   --text-primary: #F5F7FA;
-  --text-secondary: #8B949E;
-  --text-muted: #545D68;
-  --text-inverse: #000000;
+  --text-secondary: #AEB7C2;
+  --text-muted: #7D8794;
+  --text-inverse: #0B0E12;
 
   /* === Alias per coerenza interna === */
   --accent: var(--jeeg-green);
@@ -56,12 +56,12 @@
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
 
   /* === Dimensioni === */
-  --text-xs: 0.7rem;
-  --text-sm: 0.8rem;
-  --text-base: 0.9rem;
-  --text-lg: 1.05rem;
-  --text-xl: 1.25rem;
-  --text-2xl: 1.6rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.85rem;
+  --text-base: 0.95rem;
+  --text-lg: 1.1rem;
+  --text-xl: 1.3rem;
+  --text-2xl: 1.65rem;
   --text-3xl: 2rem;
 
   /* === Spaziature === */
@@ -194,4 +194,13 @@ a:hover {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+/* ==========================================================================
+   MOTTO DI PAGINA — condiviso da Graph, Wiki, KB (stesso stile ovunque)
+   ========================================================================== */
+
+.motto {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-style: italic;
 }

@@ -13,22 +13,31 @@ from app.config import settings
 from app.services.llm_manager import llm_manager
 
 
-GRAPH_EXTRACTION_PROMPT = """Analizza il seguente testo ed estrai entità e relazioni.
+GRAPH_EXTRACTION_PROMPT = """Analizza il testo ed estrai entità e relazioni.
 Restituisci SOLO un array JSON di oggetti con formato:
-[{{"subject": "Entità A", "predicate": "relazione", "object": "Entità B", "subject_type": "TipoA", "object_type": "TipoB", "confidence": 0.9}}]
-
-Tipi validi: Persona, Organizzazione, Procedura, Documento, Luogo, Concetto
+[{{"subject": "...", "predicate": "...", "object": "...", "subject_type": "...", "object_type": "...", "confidence": 0.9}}]
 
 Regole:
+- Le entità devono essere nominate ESPPLICITAMENTE nel testo (nomi propri, termini tecnici, concetti citati). NON inventare entità
+- Il campo type descrive la natura dell'entità così come emerge dal testo stesso: NON usare categorie predefinite, la tassonomia è libera
 - Estrai solo relazioni esplicite nel testo, non inferite
+- subject e object devono essere diversi tra loro
 - La confidence deve riflettere la certezza che la relazione esista nel testo (0.0-1.0)
-- Ignora entità generiche come "il dipendente" senza nome specifico
+- Ignora riferimenti generici senza denominazione specifica (articoli, pronomi, ruoli anonimi)
+- Se non ci sono entità o relazioni significative, restituisci []
 - Massimo 15 triple per testo
 
 TESTO:
 {text}"""
 
-GRAPH_DEDUP_SIMILARITY_THRESHOLD = 0.85
+GRAPH_DEDUP_SIMILARITY_THRESHOLD = 0.92
+
+# Etichette non valide come entità: segnaposto dell'esempio del prompt e valori
+# nulli. Filtro generico, indipendente dal dominio dei documenti.
+_INVALID_LABELS = {
+    "entità a", "entità b", "entita a", "entita b", "entity a", "entity b",
+    "tipoa", "tipob", "type a", "type b", "n/a", "null", "none", "unknown",
+}
 
 
 class GraphBuilder:
@@ -94,8 +103,8 @@ class GraphBuilder:
         # Deduplica nodi e aggiungi al grafo
         added = 0
         for triple in filtered:
-            s_node = self._add_node(graph, triple["subject"], triple.get("subject_type", "Concetto"), doc_id)
-            o_node = self._add_node(graph, triple["object"], triple.get("object_type", "Concetto"), doc_id)
+            s_node = self._add_node(graph, triple["subject"], triple.get("subject_type", ""), doc_id)
+            o_node = self._add_node(graph, triple["object"], triple.get("object_type", ""), doc_id)
 
             # Controlla se l'arco esiste già
             edge_exists = any(
@@ -137,7 +146,7 @@ class GraphBuilder:
         node = {
             "id": node_id,
             "label": label,
-            "type": type_,
+            "type": (type_ or "").strip() or "Non classificato",
             "documents": [doc_id],
         }
         graph["nodes"].append(node)
@@ -174,17 +183,43 @@ class GraphBuilder:
 
         try:
             triples = json.loads(json_match.group())
-            # Valida formato
+            # Valida formato: nessuna tassonomia predefinita. Vengono scartate
+            # triple malformate o con entità segnaposto/fittizie.
             valid = []
             for t in triples:
-                if all(k in t for k in ("subject", "predicate", "object")):
-                    t.setdefault("subject_type", "Concetto")
-                    t.setdefault("object_type", "Concetto")
-                    t.setdefault("confidence", 0.7)
-                    valid.append(t)
+                if not all(k in t for k in ("subject", "predicate", "object")):
+                    continue
+                if not self._valid_entity_label(t["subject"]) or not self._valid_entity_label(t["object"]):
+                    continue
+                # Soggetto e oggetto coincidenti non rappresentano una relazione
+                if t["subject"].strip().lower() == t["object"].strip().lower():
+                    continue
+                t.setdefault("subject_type", "")
+                t.setdefault("object_type", "")
+                t.setdefault("confidence", 0.7)
+                valid.append(t)
             return valid
         except json.JSONDecodeError:
             return []
+
+    @staticmethod
+    def _valid_entity_label(label) -> bool:
+        """True se l'etichetta è una denominazione plausibile di entità.
+
+        Controllo puramente strutturale (lunghezza, contenuto, segnaposto
+        dell'esempio del prompt): nessun dominio o categoria è predefinito.
+        """
+        if not isinstance(label, str):
+            return False
+        cleaned = label.strip()
+        if len(cleaned) < 2 or len(cleaned) > 80:
+            return False
+        if cleaned.lower() in _INVALID_LABELS:
+            return False
+        # Solo cifre o senza caratteri alfanumerici: non è un'entità
+        if cleaned.isdigit() or not re.search(r"[\wà-ÿ]", cleaned, re.IGNORECASE):
+            return False
+        return True
 
     def _similarity(self, a: str, b: str) -> float:
         """Similarità semplice basata su sovrapposizione di parole."""
