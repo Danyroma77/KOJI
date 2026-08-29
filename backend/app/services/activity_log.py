@@ -103,6 +103,21 @@ class ActivityLog:
         ordered = sorted(entries, key=lambda e: e.get("timestamp", ""), reverse=True)
         return ordered[:limit]
 
+    def list_page(self, offset: int = 0, limit: int = 20) -> tuple:
+        """Restituisce una pagina di attività e il totale disponibile.
+
+        Ordinamento identico a list_recent (dalla più nuova alla più vecchia).
+        `offset` abilita la paginazione server-side dell'intero log, non solo
+        dei primi N eventi.
+
+        Returns:
+            Tupla (voci_della_pagina, totale_voci_nel_log).
+        """
+        with self._lock:
+            entries = self._read()
+        ordered = sorted(entries, key=lambda e: e.get("timestamp", ""), reverse=True)
+        return ordered[offset:offset + limit], len(ordered)
+
     def seed_from_catalog(self, catalog_docs: list) -> bool:
         """Popola il log a partire dai documenti già presenti nel catalogo.
 

@@ -21,6 +21,9 @@ const ACTIVITY_TYPE_MAP = {
   embedding: { label: 'Vettorizzazione', cls: 'badge-warn' },
   ready: { label: 'Indicizzato', cls: 'badge-ok' },
   error: { label: 'Errore', cls: 'badge-error' },
+  reprocessing: { label: 'Riprocessato', cls: 'badge-info' },
+  wiki_generated: { label: 'Wiki generata', cls: 'badge-info' },
+  graph_extracted: { label: 'Grafo estratto', cls: 'badge-info' },
 }
 
 export default function Home() {
@@ -54,46 +57,56 @@ export default function Home() {
   }, [])
 
   // --- Metriche + documenti + cronologia attività ---
+  // Ogni risorsa viene gestita in un blocco indipendente: un errore su
+  // metriche o documenti non deve MAI impedire il caricamento della
+  // cronologia attività (che altrimenti resterebbe vuota sulla home).
   const fetchData = useCallback(async () => {
-    try {
-      const [metricsRes, docsRes, activitiesRes] = await Promise.all([
-        fetch('/api/system/metrics'),
-        fetch('/api/documents'),
-        listActivities(20).catch(() => null),
-      ])
+    const [metricsRes, docsRes] = await Promise.all([
+      fetch('/api/system/metrics').catch(() => null),
+      fetch('/api/documents').catch(() => null),
+    ])
 
-      if (metricsRes.ok) {
+    if (metricsRes && metricsRes.ok) {
+      try {
         setMetrics(await metricsRes.json())
+      } catch {
+        // Risposta non parsabile: si riprova al prossimo tick
       }
+    }
 
-      if (docsRes.ok) {
+    if (docsRes && docsRes.ok) {
+      try {
         const data = await docsRes.json()
-        setDocs(data.documents)
+        setDocs(data.documents || [])
+      } catch {
+        // Risposta non parsabile: si riprova al prossimo tick
       }
+    }
 
-      // Cronologia attività dal log persistente: oltre a upload e indicizzazione
-      // include le modifiche (sovrascrittura di un file) e le eliminazioni,
-      // che altrimenti sparirebbero insieme al documento dal catalogo.
-      if (activitiesRes && activitiesRes.ok) {
-        const data = await activitiesRes.json()
-        const recent = (data.activities || []).map(a => {
-          const dateTime = a.timestamp
-            ? new Date(a.timestamp).toLocaleString('it-IT', {
-                day: '2-digit', month: '2-digit', year: 'numeric',
-                hour: '2-digit', minute: '2-digit',
-              })
-            : '—'
-          const type = ACTIVITY_TYPE_MAP[a.action] || { label: a.action || 'Sconosciuto', cls: 'badge-info' }
-          return {
-            dateTime,
-            filename: a.filename,
-            type,
-            detail: a.detail || '',
-            status: a.action,
-          }
-        })
-        setActivities(recent)
-      }
+    // Cronologia attività dal log persistente: oltre a upload e indicizzazione
+    // include le modifiche (sovrascrittura di un file) e le eliminazioni,
+    // che altrimenti sparirebbero insieme al documento dal catalogo.
+    // Limitata agli ultimi 15 eventi.
+    try {
+      const data = await listActivities(15)
+      const recent = (data.activities || []).map(a => {
+        const dateTime = a.timestamp
+          ? new Date(a.timestamp).toLocaleString('it-IT', {
+              day: '2-digit', month: '2-digit', year: 'numeric',
+              hour: '2-digit', minute: '2-digit',
+            })
+          : '—'
+        const type = ACTIVITY_TYPE_MAP[a.action] || { label: a.action || 'Sconosciuto', cls: 'badge-info' }
+        return {
+          id: a.id,
+          dateTime,
+          filename: a.filename,
+          type,
+          detail: a.detail || '',
+          status: a.action,
+        }
+      })
+      setActivities(recent)
     } catch {
       // Silenzioso — al prossimo tick riprova
     }
@@ -233,8 +246,8 @@ export default function Home() {
                   </tr>
                 </thead>
                 <tbody>
-                  {activities.map((a, i) => (
-                    <tr key={i} className={a.status === 'error' ? 'row-error' : ''}>
+                  {activities.map(a => (
+                    <tr key={a.id || a.dateTime + a.filename} className={a.status === 'error' ? 'row-error' : ''}>
                       <td style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', whiteSpace: 'nowrap' }}>
                         {a.dateTime}
                       </td>

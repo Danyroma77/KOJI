@@ -78,12 +78,54 @@ export async function listJobs() {
 }
 
 /**
- * Cronologia delle attività sulla KB.
+ * Richiede il riprocessamento del file originale (parsing → normalizzazione
+ * → chunking → embedding → wiki/grafo) senza nuovo upload.
+ */
+export async function reprocessDocument(docId) {
+  const res = await fetch(`${API_BASE}/${docId}/reprocess`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `Errore riprocessamento: ${res.status}`)
+  }
+  return res.json()
+}
+
+/**
+ * Accoda la rigenerazione della wiki (globale) a partire dal documento indicato.
+ */
+export async function regenerateWiki(docId) {
+  const res = await fetch(`${API_BASE}/${docId}/regenerate-wiki`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `Errore wiki: ${res.status}`)
+  }
+  return res.json()
+}
+
+/**
+ * Accoda la ri-estrazione del grafo di conoscenza per il singolo documento.
+ */
+export async function regenerateGraph(docId) {
+  const res = await fetch(`${API_BASE}/${docId}/regenerate-graph`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.detail || `Errore grafo: ${res.status}`)
+  }
+  return res.json()
+}
+
+/**
+ * Cronologia delle attività sulla KB, con paginazione server-side.
  * Include upload, modifiche (sovrascrittura file esistente), eliminazioni
  * ed esiti del processing (indicizzato / errore).
+ *
+ * `limit` e `offset` sono opzionali: con l'immagine API precedente l'extra
+ * query param `offset` viene ignorato da FastAPI e restano validi i limiti
+ * fino a 50, quindi la funzione resta compatibile in entrambi i casi.
  */
-export async function listActivities(limit = 20) {
-  const res = await fetch(`${API_BASE}/activities?limit=${limit}`)
+export async function listActivities(limit = 20, offset = 0) {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  const res = await fetch(`${API_BASE}/activities?${params.toString()}`)
   if (!res.ok) throw new Error(`Errore attività: ${res.status}`)
   return res.json()
 }

@@ -196,6 +196,7 @@ class RAGEngine:
                 item["rerank_score"] = float(score)
             candidates.sort(key=lambda x: x["rerank_score"], reverse=True)
         final_chunks = candidates[:top_k]
+        t_retrieval_done = time.time()
 
         # Invia fonti
         sources = []
@@ -248,7 +249,8 @@ class RAGEngine:
             "type": "metrics",
             "tok_per_sec": round(tok_per_sec, 1),
             "ttft": round(ttft if not first_token else 0, 2),
-            "retrieval_time_ms": round((time.time() - t_start) * 1000, 1),
+            # Tempo effettivo di embedding+retrieval+reranking, misurato PRIMA della generazione
+            "retrieval_time_ms": round((t_retrieval_done - t_start) * 1000, 1),
         }
         yield {"type": "done"}
 

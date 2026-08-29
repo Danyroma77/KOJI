@@ -1365,24 +1365,26 @@
 .kb-page {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - var(--navbar-h) - var(--space-xl) * 2);
+  /* Ignora il padding inferiore di .main-content: lo spazio recuperato
+     va alla tabella per garantire piu righe visibili */
+  height: calc(100vh - var(--navbar-h) - var(--space-xl));
 }
 
 @media (max-width: 768px) {
   /* Il padding di .main-content si riduce su mobile */
   .kb-page {
-    height: calc(100vh - var(--navbar-h) - var(--space-md) * 2);
+    height: calc(100vh - var(--navbar-h) - var(--space-md));
   }
 }
 
 .kb-header {
-  margin-bottom: var(--space-lg);
+  margin-bottom: var(--space-md);
 }
 
 .kb-header h2 {
-  font-size: var(--text-xl);
+  font-size: var(--text-lg);
   font-weight: 800;
-  margin-bottom: var(--space-xs);
+  margin-bottom: 2px;
 }
 
 .kb-header .kb-motto {
@@ -1398,15 +1400,19 @@
   font-family: var(--font-mono);
 }
 
-/* Area upload — stile "bay di lancio" */
+/* Area upload — barra orizzontale compatta su un'unica riga */
 .kb-upload {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
   border: 2px dashed var(--border-default);
   border-radius: 8px;
-  padding: var(--space-2xl);
+  padding: var(--space-sm) var(--space-lg);
   text-align: center;
   cursor: pointer;
   transition: all var(--transition-base);
-  margin-bottom: var(--space-lg);
+  margin-bottom: var(--space-sm);
   background: var(--bg-card);
 }
 
@@ -1417,10 +1423,11 @@
 }
 
 .kb-upload-icon {
-  width: 48px;
-  height: 48px;
+  width: 18px;
+  height: 18px;
   color: var(--text-muted);
-  margin: 0 auto var(--space-md);
+  margin: 0;
+  flex-shrink: 0;
   transition: color var(--transition-fast);
 }
 
@@ -1429,25 +1436,44 @@
 }
 
 .kb-upload-text {
-  font-size: var(--text-base);
+  font-size: var(--text-xs);
   font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: var(--space-xs);
   text-transform: uppercase;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+
+/* Separatore tra testo e lista formati sulla stessa riga */
+.kb-upload-formats::before {
+  content: '\00b7';
+  margin-right: var(--space-sm);
+  color: var(--text-muted);
 }
 
 .kb-upload-formats {
   font-size: var(--text-xs);
   color: var(--text-muted);
   font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .kb-upload {
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--space-md) var(--space-lg);
+  }
+  .kb-upload-formats::before {
+    content: none;
+  }
 }
 
 .kb-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: var(--space-md);
+  margin-bottom: var(--space-sm);
   flex-wrap: wrap;
   gap: var(--space-sm);
 }
@@ -1480,19 +1506,21 @@
 }
 
 .kb-table th {
-  padding: 10px 14px;
+  padding: 8px 12px;
   text-align: left;
   font-size: var(--text-xs);
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   white-space: nowrap;
 }
 
+/* Righe dense ma leggibili: ~38px a riga => >=10 righe sempre visibili */
 .kb-table td {
-  padding: 12px 14px;
-  font-size: var(--text-sm);
+  padding: 8px 12px;
+  font-size: var(--text-base);
+  line-height: 1.45;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border-subtle);
   vertical-align: middle;
@@ -1502,13 +1530,18 @@
   border-bottom: none;
 }
 
+/* Zebra striping leggera per seguire le righe a occhio nudo */
+.kb-table tbody tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.025);
+}
+
 .kb-table tr:hover td {
   background: var(--bg-hover);
 }
 
 .kb-table .doc-name {
   color: var(--text-primary);
-  font-weight: 500;
+  font-weight: 600;
   max-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1522,8 +1555,8 @@
 }
 
 .kb-action-btn {
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
   background: transparent;
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
@@ -1539,6 +1572,20 @@
   color: var(--jeeg-green);
   border-color: var(--jeeg-green);
   background: var(--jeeg-green-dim);
+}
+
+.kb-action-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  color: var(--text-muted);
+  background: transparent;
+  border-color: var(--border-subtle);
+}
+
+.kb-action-btn:disabled:hover {
+  color: var(--text-muted);
+  background: transparent;
+  border-color: var(--border-subtle);
 }
 
 .kb-action-btn.danger:hover {
@@ -2235,6 +2282,21 @@
   white-space: nowrap;
 }
 
+/* Chip affiancata al nome file nel visualizzatore quando si apre la vista
+   normalizzata (pulsante cervello): distingue il contesto del contenuto */
+.kb-viewer-mode {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--space-sm);
+  padding: 1px 10px;
+  font-size: var(--text-xs);
+  color: var(--jeeg-green);
+  background: var(--jeeg-green-dim);
+  border: 1px solid var(--jeeg-green);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
 .kb-viewer-close {
   width: 30px;
   height: 30px;
@@ -2272,4 +2334,101 @@
   word-break: break-word;
   tab-size: 4;
   margin: 0;
+}
+
+/* ==========================================================================
+   STORICO ATTIVITÀ — box a fondo pagina Monitor
+   ========================================================================== */
+
+.activity-card {
+  margin-top: var(--space-lg);
+}
+
+.activity-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.activity-search {
+  flex: 1;
+  max-width: 300px;
+  min-width: 180px;
+  /* Allineato all'altezza di .rag-select e .activity-btn nella stessa barra */
+  padding: 6px 12px;
+}
+
+.activity-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.activity-btn:hover:not(:disabled) {
+  color: var(--jeeg-green);
+  border-color: var(--jeeg-green);
+}
+
+.activity-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.activity-table-wrap {
+  max-height: 540px;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.activity-table .activity-when {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.activity-table .activity-detail {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+
+.activity-empty {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  padding: var(--space-md) 0;
+}
+
+.activity-pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.activity-pager-info {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.activity-pager-btns {
+  display: flex;
+  gap: var(--space-xs);
 }

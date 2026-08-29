@@ -13,7 +13,7 @@ from pathlib import Path
 from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from app.config import settings
 from app.models import (
@@ -67,6 +67,17 @@ def _remove_document_artifacts(doc_id: str):
     graph_builder.remove_by_doc(doc_id)
     for f in settings.RAW_DIR.glob(f"{doc_id}_*"):
         f.unlink()
+    processed = settings.PROCESSED_DIR / f"{doc_id}.md"
+    if processed.exists():
+        processed.unlink()
+
+
+def _reset_indexing_artifacts(doc_id: str):
+    """Reset dei soli artefatti derivati del documento: vettori, nodi grafo
+    e testo normalizzato. PRESERVA il file raw — serve al reprocessing,
+    in cui il documento esiste già e va solo ri-elaborato."""
+    vector_store.delete_by_doc(doc_id)
+    graph_builder.remove_by_doc(doc_id)
     processed = settings.PROCESSED_DIR / f"{doc_id}.md"
     if processed.exists():
         processed.unlink()
@@ -244,21 +255,29 @@ async def list_documents():
 
 
 @router.get("/activities", response_model=ActivityListResponse)
-async def list_activities(limit: int = Query(default=20, ge=1, le=50)):
+async def list_activities(
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
     """Cronologia delle attività sulla KB.
 
     Traccia oltre agli upload anche le modifiche (sovrascrittura di un file
     esistente) e le eliminazioni — eventi che altrimenti sparirebbero dal
     catalogo. Al primo avvio popola il log dai documenti già presenti.
+
+    Paginazione server-side: `offset` + `limit` permettono di scorrere tutto
+    il log (MAX_ACTIVITIES = 200, quindi un cap di limit=200 basta a coprirlo
+    in una sola richiesta). `total` riporta il numero complessivo di eventi
+    registrati, così il client può calcolare quante pagine esistono.
     """
     # Nota: la route è dichiarata prima di /{doc_id} per evitare che
     # "activities" venga interpretato come un id documento.
     catalog = _load_catalog()
     activity_log.seed_from_catalog(catalog["documents"])
-    entries = activity_log.list_recent(limit=limit)
+    entries, total_count = activity_log.list_page(offset=offset, limit=limit)
     return ActivityListResponse(
         activities=[ActivityEntry(**e) for e in entries],
-        total=len(entries),
+        total=total_count,
     )
 
 
@@ -339,6 +358,33 @@ async def delete_document(doc_id: str, background_tasks: BackgroundTasks):
     return {"status": "ok", "message": f"Documento '{filename}' eliminato"}
 
 
+@router.get("/{doc_id}/text")
+async def get_document_text(doc_id: str):
+    """Restituisce il testo estratto dal documento (per il viewer della KB).
+
+    A differenza di /download (che serve il file originale, anche binario
+    per PDF/DOCX), qui si restituisce il testo normalizzato prodotto dalla
+    pipeline di parsing — leggibile per qualsiasi formato.
+    """
+    catalog = _load_catalog()
+    doc_entry = next((d for d in catalog["documents"] if d["id"] == doc_id), None)
+
+    if not doc_entry:
+        raise HTTPException(status_code=404, detail="Documento non trovato")
+
+    processed_path = settings.PROCESSED_DIR / f"{doc_id}.md"
+    if not processed_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Testo non disponibile: il documento non è ancora stato processato",
+        )
+
+    return PlainTextResponse(
+        content=processed_path.read_text(encoding="utf-8", errors="replace"),
+        media_type="text/plain; charset=utf-8",
+    )
+
+
 @router.get("/{doc_id}/download")
 async def download_document(doc_id: str):
     """Scarica il file originale di un documento."""
@@ -358,6 +404,128 @@ async def download_document(doc_id: str):
         filename=doc_entry["filename"],
         media_type="application/octet-stream",
     )
+
+
+# ============ Azioni per singolo documento (richieste da interfaccia) ============
+
+@router.post("/{doc_id}/reprocess")
+async def reprocess_document(doc_id: str):
+    """Richiede un nuovo processing (parsing→wiki/grafo) del file originale.
+
+    Non richiede un nuovo upload: il file raw già presente su disco viene
+    ri-elaborato. I vecchi artefatti indicizzati (vettori, grafo, testo
+    normalizzato) vengono azzerati; wiki e grafo verranno rigenerati dai job
+    indipendenti accodati automaticamente a fine processing.
+    """
+    from app.services.job_queue import job_queue
+
+    catalog = _load_catalog()
+    doc_entry = next((d for d in catalog["documents"] if d["id"] == doc_id), None)
+    if not doc_entry:
+        raise HTTPException(status_code=404, detail=f"Documento {doc_id} non trovato")
+
+    filename = doc_entry["filename"]
+    raw_files = list(settings.RAW_DIR.glob(f"{doc_id}_*"))
+    if not raw_files:
+        raise HTTPException(
+            status_code=404,
+            detail="File originale non disponibile su disco: impossibile riprocessare",
+        )
+
+    # Annulla eventuali job ancora pendenti per questo documento (es. wiki/grafo
+    # della precedente elaborazione) prima di accodarne di nuovi.
+    job_queue.cancel_pending_for_doc(
+        doc_id, reason="Annullato: sostituito da un nuovo processing richiesto"
+    )
+
+    # Guardia anti-doppione: un processing per questo documento non deve
+    # mai essere in coda o in esecuzione due volte contemporaneamente.
+    if job_queue.has_active_for_doc(doc_id, job_type="process_document"):
+        raise HTTPException(
+            status_code=409,
+            detail="Un processing di questo documento è già in corso o in coda",
+        )
+
+    # Azzera gli artefatti derivati mantenendo il file raw
+    _reset_indexing_artifacts(doc_id)
+
+    # Riparte come un caricamento: il worker eseguirà l'intera catena
+    doc_entry["status"] = DocumentStatus.UPLOADED.value
+    doc_entry["error_message"] = None
+    doc_entry["chunks_count"] = None
+    doc_entry["updated_at"] = datetime.now().isoformat()
+    _save_catalog(catalog)
+
+    activity_log.log(ActivityAction.REPROCESSING, filename, doc_id)
+
+    raw_path = raw_files[0]
+    job = job_queue.enqueue("process_document", {
+        "doc_id": doc_id,
+        "filename": filename,
+        "raw_path": str(raw_path),
+    })
+    logger.info("Accodato reprocessing %s per %s", job.id, filename)
+
+    return {
+        "status": "ok",
+        "job_id": job.id,
+        "message": f"Riprocessamento di '{filename}' accodato",
+    }
+
+
+@router.post("/{doc_id}/regenerate-wiki")
+async def regenerate_wiki_for_document(doc_id: str):
+    """Accoda la rigenerazione della wiki (globale) che include il documento.
+
+    La wiki aggrega sezioni da tutti i documenti pronti: la richiesta parte
+    dal singolo documento ma la ricostruzione copre l'intera KB. Job indipendente:
+    un eventuale fallimento non tocca grafo né indicizzazione.
+    """
+    from app.services.job_queue import job_queue
+
+    catalog = _load_catalog()
+    doc_entry = next((d for d in catalog["documents"] if d["id"] == doc_id), None)
+    if not doc_entry:
+        raise HTTPException(status_code=404, detail=f"Documento {doc_id} non trovato")
+
+    job = job_queue.enqueue("generate_wiki", {
+        "doc_id": doc_id,
+        "filename": doc_entry["filename"],
+    })
+    logger.info("Accodata rigenerazione wiki %s per %s", job.id, doc_entry["filename"])
+
+    return {
+        "status": "ok",
+        "job_id": job.id,
+        "message": "Rigenerazione wiki accodata",
+    }
+
+
+@router.post("/{doc_id}/regenerate-graph")
+async def regenerate_graph_for_document(doc_id: str):
+    """Accoda la ri-estrazione del grafo per il singolo documento tramite LLM.
+
+    Le triple precedenti del documento vengono rimosse dal job e sostituite.
+    Operazione indipendente: non modifica chunk, wiki né stato di indicizzazione.
+    """
+    from app.services.job_queue import job_queue
+
+    catalog = _load_catalog()
+    doc_entry = next((d for d in catalog["documents"] if d["id"] == doc_id), None)
+    if not doc_entry:
+        raise HTTPException(status_code=404, detail=f"Documento {doc_id} non trovato")
+
+    job = job_queue.enqueue("generate_graph", {
+        "doc_id": doc_id,
+        "filename": doc_entry["filename"],
+    })
+    logger.info("Accodata ri-estrazione grafo %s per %s", job.id, doc_entry["filename"])
+
+    return {
+        "status": "ok",
+        "job_id": job.id,
+        "message": f"Estrazione grafo di '{doc_entry['filename']}' accodata",
+    }
 
 
 async def _regenerate_wiki(catalog: dict):

@@ -9,6 +9,8 @@ export default function RAG() {
   const [sources, setSources] = useState([])
   const [metrics, setMetrics] = useState({ tokPerSec: '—', ttft: '—' })
   const [activeModel, setActiveModel] = useState(null)
+  // null = verifica in corso, false = KB vuota, true = almeno un documento pronto
+  const [kbReady, setKbReady] = useState(null)
   const messagesEndRef = useRef(null)
   const navigate = useNavigate()
 
@@ -27,6 +29,27 @@ export default function RAG() {
     }
     loadActiveModel()
     const id = setInterval(loadActiveModel, 6000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [])
+
+  // Verifica reale dello stato della Knowledge Base (prima veniva usata
+  // la funzione docsReady come valore booleano: sempre truthy → placeholder errato).
+  useEffect(() => {
+    let cancelled = false
+    async function checkKb() {
+      try {
+        const res = await fetch('/api/documents')
+        const data = await res.json()
+        if (!cancelled) setKbReady((data.documents || []).some(d => d.status === 'ready'))
+      } catch {
+        if (!cancelled) setKbReady(false)
+      }
+    }
+    checkKb()
+    const id = setInterval(checkKb, 15000)
     return () => {
       cancelled = true
       clearInterval(id)
@@ -167,9 +190,9 @@ export default function RAG() {
               <div style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-muted)' }}>
                 <p style={{ fontSize: 'var(--text-lg)', marginBottom: '0.5rem' }}>Inserisci una domanda per interrogare la Knowledge Base</p>
                 <p style={{ fontSize: 'var(--text-sm)' }}>
-                  {docsReady
-                    ? 'Le risposte saranno anchorate ai documenti indicizzati'
-                    : 'Carica prima dei documenti dalla KB per abilitare le interrogazioni'}
+                  {kbReady === false
+                    ? 'Carica prima dei documenti dalla KB per abilitare le interrogazioni'
+                    : 'Le risposte saranno anchorate ai documenti indicizzati'}
                 </p>
               </div>
             )}
@@ -250,20 +273,6 @@ export default function RAG() {
       </div>
     </div>
   )
-}
-
-// Verifica se ci sono documenti pronti (per il messaggio placeholder)
-let _docsReady = null
-async function docsReady() {
-  if (_docsReady !== null) return _docsReady
-  try {
-    const res = await fetch('/api/documents')
-    const data = await res.json()
-    _docsReady = data.documents.some(d => d.status === 'ready')
-  } catch {
-    _docsReady = false
-  }
-  return _docsReady
 }
 
 // Markdown inline senza dipendenze extra

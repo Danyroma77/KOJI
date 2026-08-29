@@ -62,6 +62,20 @@ def process_document_job(job):
     def update_progress(step, sub=0):
         job_queue.update_progress(job.id, (step + sub * 0.2) / total_steps)
 
+    processed_path = settings.PROCESSED_DIR / f"{doc_id}.md"
+
+    def _mark_doc_error(msg: str):
+        for doc in catalog["documents"]:
+            if doc["id"] == doc_id:
+                doc["status"] = DocumentStatus.ERROR.value
+                doc["error_message"] = msg
+                doc["updated_at"] = datetime.now().isoformat()
+                break
+        _save_catalog(catalog)
+
+    # ============ FASE 1 — Parsing + Normalizzazione + Metadati ============
+    # Dipendono tra loro (una produce l'input della successiva): un errore
+    # qui rende impossibile tutto il resto, quindi il job termina.
     try:
         logger.info("[%s] Parsing: %s", job.id, filename)
         file_bytes = raw_path.read_bytes()
@@ -70,7 +84,6 @@ def process_document_job(job):
 
         logger.info("[%s] Normalizzazione", job.id)
         normalized_text = normalizer.normalize(parse_result.text)
-        processed_path = settings.PROCESSED_DIR / f"{doc_id}.md"
         processed_path.write_text(normalized_text, encoding="utf-8")
         update_progress(2)
 
@@ -94,10 +107,24 @@ def process_document_job(job):
                 doc["metadata_structural"] = struct_meta.model_dump()
                 doc["metadata_tech"] = tech_meta.model_dump()
                 break
+        _save_catalog(catalog)
         update_progress(3)
 
+    except Exception as e:
+        logger.error("[%s] FALLITO (parsing/normalizzazione): %s — %s", job.id, filename, e)
+        _mark_doc_error(str(e))
+        activity_log.log(ActivityAction.ERROR, filename, doc_id, detail=str(e)[:80])
+        raise
+
+    # ============ FASE 2 — Chunking + Embedding + Indicizzazione ============
+    # Isolata dalla fase 1: se fallisce il testo normalizzato esiste comunque,
+    # quindi wiki e grafo (che dipendono solo da quello) restano possibili.
+    indexing_error = None
+    chunks_count = None
+    try:
         logger.info("[%s] Chunking", job.id)
         chunks = chunk_manager.chunk_text(normalized_text, doc_id)
+        chunks_count = len(chunks)
         update_progress(4)
 
         logger.info("[%s] Embedding %d chunk", job.id, len(chunks))
@@ -120,36 +147,180 @@ def process_document_job(job):
             if doc["id"] == doc_id:
                 doc["chunks_count"] = len(chunks)
                 doc["status"] = DocumentStatus.READY.value
+                doc["error_message"] = None
                 doc["updated_at"] = datetime.now().isoformat()
                 break
         _save_catalog(catalog)
 
-        # Traccia l'esito positivo del processing nella cronologia attività
         activity_log.log(
             ActivityAction.READY, filename, doc_id,
             detail=f"{len(chunks)} chunk",
         )
-
-        logger.info("[%s] COMPLETATO: %s -> %d chunk", job.id, filename, len(chunks))
-        return {"chunks": len(chunks), "filename": filename}
+        logger.info("[%s] INDICIZZATO: %s -> %d chunk", job.id, filename, len(chunks))
 
     except Exception as e:
-        logger.error("[%s] FALLITO: %s — %s", job.id, filename, e)
-        for doc in catalog["documents"]:
-            if doc["id"] == doc_id:
-                doc["status"] = DocumentStatus.ERROR.value
-                doc["error_message"] = str(e)
-                doc["updated_at"] = datetime.now().isoformat()
+        indexing_error = str(e)
+        logger.error("[%s] FALLITO (indicizzazione): %s — %s", job.id, filename, e)
+        _mark_doc_error(indexing_error)
+        activity_log.log(ActivityAction.ERROR, filename, doc_id, detail=indexing_error[:80])
+        # NON raise: i job downstream vengono comunque accodati qui sotto
+
+    # ==== FASE 3 — Artefatti derivati: grafo e wiki come JOB INDIPENDENTI ====
+    # La generazione di wiki e grafo dipende SOLO dal testo normalizzato,
+    # non dall'esito dell'indicizzazione: se il testo esiste vengono accodati
+    # come job separati, così un fallimento di uno non blocca l'altro né
+    # incide sullo stato di indicizzazione del documento.
+    downstream = 0
+    if processed_path.exists():
+        # Ripulisce residui pendenti di tentativi precedenti (es. dopo un
+        # retry di un job fallito) per evitare esecuzioni doppie.
+        job_queue.cancel_pending_for_doc(
+            doc_id, reason="Annullato: sostituito dal nuovo processing del documento"
+        )
+        job_queue.enqueue("generate_graph", {"doc_id": doc_id, "filename": filename})
+        job_queue.enqueue("generate_wiki", {"doc_id": doc_id, "filename": filename})
+        downstream = 2
+        logger.info("[%s] Accodati grafo e wiki per %s", job.id, filename)
+
+    if indexing_error:
+        # Il job fallisce per tracciabilità, ma grafo/wiki sono già in coda
+        raise RuntimeError(indexing_error)
+
+    return {"chunks": chunks_count, "filename": filename, "downstream_jobs": downstream}
+
+
+def generate_graph_job(job):
+    """Genera il grafo di conoscenza per UN singolo documento.
+
+    Job indipendente dal processing principale: legge il testo normalizzato
+    già salvato su disco, rimuove le triple precedenti del documento e
+    ri-estrae tramite LLM. Un errore qui non compromette wiki né RAG.
+    """
+    import asyncio
+    from pathlib import Path
+
+    from app.config import settings
+    from app.services.graph_builder import graph_builder
+    from app.services.job_queue import job_queue
+    from app.services.activity_log import activity_log
+    from app.routers.documents import _load_catalog, _save_catalog
+    from app.models import ActivityAction
+
+    doc_id = job.payload["doc_id"]
+    filename = job.payload.get("filename", "documento")
+
+    catalog = _load_catalog()
+    doc = next((d for d in catalog["documents"] if d["id"] == doc_id), None)
+    if not doc:
+        logger.info("[%s] SALTATO: %s eliminato prima della generazione grafo", job.id, filename)
+        return {"skipped": True, "filename": filename}
+
+    processed_path = Path(settings.PROCESSED_DIR) / f"{doc_id}.md"
+    if not processed_path.exists():
+        logger.info("[%s] SALTATO: testo normalizzato assente per %s", job.id, filename)
+        return {"skipped": True, "filename": filename, "reason": "testo assente"}
+
+    text = processed_path.read_text(encoding="utf-8")
+    if not text.strip():
+        return {"skipped": True, "filename": filename, "reason": "testo vuoto"}
+
+    title = (doc.get("metadata_structural") or {}).get("title") or filename
+
+    def _set_graph_ts():
+        for d in catalog["documents"]:
+            if d["id"] == doc_id:
+                d["graph_updated_at"] = datetime.now().isoformat()
                 break
         _save_catalog(catalog)
 
-        # Traccia il fallimento nella cronologia attività
-        activity_log.log(ActivityAction.ERROR, filename, doc_id, detail=str(e)[:80])
+    try:
+        logger.info("[%s] Grafo: estrazione triple da %s", job.id, filename)
+        # Ricostruzione pulita: prima si rimuovono nodi/archi del documento,
+        # poi si estraggono le triple col LLM (Ollama). extract_from_document
+        # gestisce internamente gli errori di singolo segmento.
+        graph_builder.remove_by_doc(doc_id)
+        n_triples = asyncio.run(
+            graph_builder.extract_from_document(doc_id, text, title)
+        )
+
+        _set_graph_ts()
+        activity_log.log(
+            ActivityAction.GRAPH_EXTRACTED, filename, doc_id,
+            detail=f"{n_triples} relazioni",
+        )
+        logger.info("[%s] GRAFO COMPLETATO: %s -> %d relazioni", job.id, filename, n_triples)
+        return {"triples": n_triples, "filename": filename}
+
+    except Exception as e:
+        logger.error("[%s] FALLITO (grafo): %s — %s", job.id, filename, e)
+        activity_log.log(ActivityAction.ERROR, filename, doc_id, detail=f"grafo: {str(e)[:60]}")
+        raise
+
+
+def generate_wiki_job(job):
+    """Rigenera la wiki dalla KB (globale), includendo il documento richiesto.
+
+    La wiki è un artefatto aggregato: viene ricostruita da tutti i documenti
+    pronti. Operazione autonoma — un errore non incide su grafo né indicizzazione.
+    """
+    from app.config import settings
+    from app.services.wiki_generator import wiki_generator
+    from app.services.job_queue import job_queue
+    from app.services.activity_log import activity_log
+    from app.routers.documents import _load_catalog, _save_catalog
+    from app.models import ActivityAction, DocumentStatus
+
+    doc_id = job.payload.get("doc_id")
+    filename = job.payload.get("filename", "KB")
+
+    catalog = _load_catalog()
+
+    docs_for_wiki = []
+    for entry in catalog["documents"]:
+        if entry.get("status") != DocumentStatus.READY.value:
+            continue
+        processed_path = settings.PROCESSED_DIR / f"{entry['id']}.md"
+        if processed_path.exists():
+            docs_for_wiki.append({
+                "id": entry["id"],
+                "filename": entry["filename"],
+                "processed_text": processed_path.read_text(encoding="utf-8"),
+                "metadata": entry.get("metadata_structural", {}) or {},
+            })
+
+    if not docs_for_wiki:
+        logger.info("[%s] SALTATO: nessun documento pronto per la wiki", job.id)
+        return {"skipped": True, "reason": "nessun documento pronto"}
+
+    try:
+        logger.info("[%s] Wiki: rigenerazione da %d documenti", job.id, len(docs_for_wiki))
+        wiki_generator.generate_all(docs_for_wiki)
+
+        # Aggiorna il timestamp wiki su tutti i documenti pronti
+        # (la ricostruzione è globale, non solo per il documento trigger)
+        now = datetime.now().isoformat()
+        for entry in catalog["documents"]:
+            if entry.get("status") == DocumentStatus.READY.value:
+                entry["wiki_updated_at"] = now
+        _save_catalog(catalog)
+
+        activity_log.log(
+            ActivityAction.WIKI_GENERATED, filename, doc_id,
+            detail=f"{len(docs_for_wiki)} documenti",
+        )
+        logger.info("[%s] WIKI COMPLETATA: %d documenti", job.id, len(docs_for_wiki))
+        return {"documents": len(docs_for_wiki), "filename": filename}
+
+    except Exception as e:
+        logger.error("[%s] FALLITO (wiki): %s — %s", job.id, filename, e)
+        activity_log.log(ActivityAction.ERROR, filename, doc_id, detail=f"wiki: {str(e)[:60]}")
         raise
 
 
 JOB_HANDLERS = {
     "process_document": process_document_job,
+    "generate_graph": generate_graph_job,
+    "generate_wiki": generate_wiki_job,
 }
 
 

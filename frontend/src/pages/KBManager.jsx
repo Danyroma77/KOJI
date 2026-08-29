@@ -1,10 +1,33 @@
+// v20260827c - azioni per singolo documento: riprocessamento del file,
+//              rigenerazione wiki e ri-estrazione grafo tramite nuovi job
+//              indipendenti (endpoint POST /documents/{id}/reprocess,
+//              /regenerate-wiki, /regenerate-graph). Il polling resta attivo
+//              finché una di queste operazioni è in corso.
+
+// v20260827b - vista sul file normalizzato: pulsante con icona cervello nella
+//              tabella KB che apre il testo normalizzato (l'artefatto Markdown
+//              prodotto dalla pipeline, origine dei chunk indicizzati), con
+//              chip "Testo normalizzato" nell'header del visualizzatore e
+//              pulsante disabilitato (con spiegazione nel tooltip) finché
+//              l'artefatto non può esistere.
+
+// v20260827 - tooltip sul badge di stato: al passaggio del mouse indica se il
+//             documento è realmente indicizzato in ChromaDB (n. chunk
+//             vettorizzati e data), il punto raggiunto dalla pipeline oppure,
+//             in caso di errore, il messaggio completo.
+
 // v20250622 - fix: null safety su tutte le proprietà dei documenti
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Upload, Download, Trash2, FileText, FileCode,
   FileArchive, X, AlertCircle, CheckCircle, RefreshCw, Eye
 } from 'lucide-react'
-import { uploadDocuments, listDocuments, deleteDocument, deleteAllDocuments, downloadDocument, STATUS_MAP } from '../services/documents'
+import {
+  uploadDocuments, listDocuments, deleteDocument, deleteAllDocuments,
+  downloadDocument, reprocessDocument, regenerateWiki, regenerateGraph,
+  STATUS_MAP,
+} from '../services/documents'
+import { Brain, BookOpen, Share2 } from 'lucide-react'
 
 const FORMAT_ICONS = {
   pdf: FileText,
@@ -22,6 +45,112 @@ function getFileIcon(format) {
   return FORMAT_ICONS[key] || FileText
 }
 
+/**
+ * Testo mostrato al passaggio del mouse sull'etichetta di stato.
+ * Dichiara esplicitamente se il documento è stato indicizzato
+ * (chunk+embedding inseriti in ChromaDB) o perché no.
+ */
+function statusTooltip(doc, st) {
+  var label = st && st.label ? st.label : String(doc.status || 'N/D')
+  switch (String(doc.status || '')) {
+    case 'uploaded':
+      return 'File caricato e accodato per il processing: NON ancora indicizzato'
+    case 'parsing':
+      return 'Estrazione del testo dal file in corso: NON ancora indicizzato'
+    case 'normalizing':
+      return 'Normalizzazione del testo in corso: NON ancora indicizzato'
+    case 'chunking':
+      return 'Suddivisione del testo in chunk in corso: NON ancora indicizzato'
+    case 'embedding':
+      return 'Vettorizzazione dei chunk in corso: NON ancora indicizzato'
+    case 'error':
+      var msg = String(doc.error_message || '').trim()
+      return msg
+        ? 'Elaborazione fallita, documento NON indicizzato. Motivo: ' + msg
+        : 'Elaborazione fallita: documento NON indicizzato'
+    case 'ready':
+      var chunks = doc.chunks_count
+      if (chunks != null && Number(chunks) > 0) {
+        var when = doc.updated_at
+          ? new Date(doc.updated_at).toLocaleString('it-IT')
+          : ''
+        return 'Documento INDICIZZATO in ChromaDB: ' + chunks +
+          ' chunk vettorizzati' + (when ? ' · ' + when : '')
+      }
+      // Stato "pronto" ma zero chunk: segnalazione anomalia
+      return 'Attenzione: stato "Pronto" ma 0 chunk in ChromaDB — indicizzazione non verificabile'
+    default:
+      return 'Stato documento: ' + label
+  }
+}
+
+/**
+ * Il file normalizzato viene salvato su disco durante l'elaborazione, dopo la
+ * normalizzazione: a partire dalla fase di chunking il suo contenuto è quindi
+ * garantito (lo stato resta 'normalizing' solo per pochi istanti). Nei primi
+ * stati la vista sarebbe vuota: teniamo il pulsante disabilitato.
+ */
+function canViewNormalized(status) {
+  var s = String(status || '')
+  return s === 'chunking' || s === 'embedding' || s === 'ready' || s === 'error'
+}
+
+/**
+ * Tooltip del pulsante cervello: spiega cosa contiene la vista normalizzata
+ * e perché il pulsante può risultare disabilitato.
+ */
+function normalizedViewTitle(doc) {
+  if (!canViewNormalized(doc.status)) {
+    var lbl = (STATUS_MAP[String(doc.status)] || {}).label || String(doc.status)
+    return 'File normalizzato non ancora disponibile: viene creato durante l\'elaborazione (stato attuale: ' + lbl + ')'
+  }
+  var base = 'Apri il file normalizzato prodotto dalla pipeline: il testo pulito in Markdown da cui derivano i chunk indicizzati'
+  var chunks = doc.chunks_count
+  if (String(doc.status) === 'ready' && chunks != null && Number(chunks) > 0) {
+    return base + ' · ' + Number(chunks) + ' chunk'
+  }
+  return base
+}
+
+/**
+ * Il riprocessamento riparte dal file raw già su disco: è consentito quando
+ * il documento è stabile (pronto, errore o in attesa di processing) ma non
+ * mentre una fase di parsing/chunking/embedding è già in corso.
+ */
+function canReprocess(status) {
+  var s = String(status || '')
+  return s === 'ready' || s === 'error' || s === 'uploaded'
+}
+
+function reprocessTitle(doc, active) {
+  if (active) return 'Riprocessamento già accodato: in attesa di esito'
+  if (!canReprocess(doc.status)) {
+    var lbl = (STATUS_MAP[String(doc.status)] || {}).label || String(doc.status)
+    return 'Non riprocessabile ora: elaborazione già in corso (stato: ' + lbl + ')'
+  }
+  return 'Riprocessa il file: nuovo parsing, chunking, indicizzazione, wiki e grafo dal file originale'
+}
+
+function wikiTitle(doc, active) {
+  if (active) return 'Rigenerazione wiki già accodata: in attesa di esito'
+  if (!canViewNormalized(doc.status)) {
+    return 'Wiki non generabile: serve prima il testo normalizzato (elaborazione non ancora sufficientemente avanzata)'
+  }
+  return 'Rigenera la wiki a partire dai documenti pronti (include questo documento)'
+}
+
+function graphTitle(doc, active) {
+  if (active) return 'Estrazione grafo già accodata: in attesa di esito'
+  if (!canViewNormalized(doc.status)) {
+    return 'Grafo non estraibile: serve prima il testo normalizzato (elaborazione non ancora sufficientemente avanzata)'
+  }
+  var last = doc.graph_updated_at
+    ? ' · ultima estrazione ' + new Date(doc.graph_updated_at).toLocaleString('it-IT')
+    : ' · mai estratto'
+  return 'Ri-estrae entità e relazioni di questo documento tramite LLM' + last
+}
+
+
 export default function KBManager() {
   const [docs, setDocs] = useState([])
   const [totalChunks, setTotalChunks] = useState(0)
@@ -35,6 +164,33 @@ export default function KBManager() {
   const pollRef = useRef(null)
   const [viewingDoc, setViewingDoc] = useState(null)
   const viewerRef = useRef(null)
+
+  // Operazioni per-documento accodate di recente (reprocess/wiki/grafo):
+  // mappa docId -> timestamp della richiesta. Mantiene il polling attivo
+  // finché il job non produce esito (o scade la finestra di osservazione).
+  const [regenPending, setRegenPending] = useState({})
+  const REGEN_WATCH_WINDOW = 180000 // 3 minuti
+
+  function markRegen(docId) {
+    setRegenPending(function(prev) {
+      var next = Object.assign({}, prev)
+      next[docId] = Date.now()
+      return next
+    })
+  }
+
+  function hasFreshRegen() {
+    var now = Date.now()
+    for (var k in regenPending) {
+      if (now - regenPending[k] < REGEN_WATCH_WINDOW) return true
+    }
+    return false
+  }
+
+  function regenActive(docId) {
+    var ts = regenPending[docId]
+    return Boolean(ts) && (Date.now() - ts < REGEN_WATCH_WINDOW)
+  }
 
   const fetchDocs = useCallback(async function() {
     try {
@@ -51,6 +207,8 @@ export default function KBManager() {
             chunks_count: d.chunks_count,
             status: d.status,
             updated_at: d.updated_at || null,
+            wiki_updated_at: d.wiki_updated_at || null,
+            graph_updated_at: d.graph_updated_at || null,
           })
         }
       }
@@ -78,14 +236,14 @@ export default function KBManager() {
           }
         }
       }
-      if (hasProcessing) fetchDocs()
+      if (hasProcessing || hasFreshRegen()) fetchDocs()
     }, 3000)
     return function() {
       clearTimeout(initialFetch)
       if (pollRef.current) clearInterval(pollRef.current)
       clearInterval(interval)
     }
-  }, [docs, fetchDocs])
+  }, [docs, fetchDocs, regenPending])
 
   function showMsg(text, type) {
     setMessage(text)
@@ -169,12 +327,57 @@ export default function KBManager() {
     })
   }
 
-  async function handleView(docId) {
+  // ==== Azioni per singolo documento: riprocessa / wiki / grafo ====
+
+  function handleReprocess(doc) {
+    if (!canReprocess(doc.status) || regenActive(doc.id)) return
+    if (!confirm('Riprocessare "' + doc.filename + '"? Chunk, grafo e testo normalizzato attuali verranno ricostruiti.')) return
+    reprocessDocument(doc.id).then(function(result) {
+      showMsg(String(result.message || 'Riprocessamento accodato'), 'success')
+      markRegen(doc.id)
+      fetchDocs()
+    }).catch(function(err) {
+      console.error(err)
+      showMsg(String(err.message), 'error')
+    })
+  }
+
+  function handleRegenWiki(doc) {
+    if (!canViewNormalized(doc.status) || regenActive(doc.id)) return
+    regenerateWiki(doc.id).then(function(result) {
+      showMsg(String(result.message || 'Rigenerazione wiki accodata'), 'success')
+      markRegen(doc.id)
+    }).catch(function(err) {
+      console.error(err)
+      showMsg(String(err.message), 'error')
+    })
+  }
+
+  function handleRegenGraph(doc) {
+    if (!canViewNormalized(doc.status) || regenActive(doc.id)) return
+    regenerateGraph(doc.id).then(function(result) {
+      showMsg(String(result.message || 'Estrazione grafo accodata'), 'success')
+      markRegen(doc.id)
+    }).catch(function(err) {
+      console.error(err)
+      showMsg(String(err.message), 'error')
+    })
+  }
+
+  async function handleView(docId, normalizedMode) {
     try {
-      var res = await fetch('/api/documents/' + String(docId) + '/download')
-      if (!res.ok) throw new Error('File non disponibile')
-      var blob = await res.blob()
-      var text = await blob.text()
+      // Usa il testo estratto dalla pipeline (leggibile per ogni formato),
+      // non il file originale che per PDF/DOCX è binario.
+      var res = await fetch('/api/documents/' + String(docId) + '/text')
+      if (!res.ok) {
+        var errDetail = 'Testo non disponibile'
+        try {
+          var errJson = await res.json()
+          errDetail = errJson.detail || errDetail
+        } catch (e) { /* risposta non JSON */ }
+        throw new Error(errDetail)
+      }
+      var text = await res.text()
       var doc = null
       if (docs && Array.isArray(docs)) {
         for (var i = 0; i < docs.length; i++) {
@@ -188,10 +391,11 @@ export default function KBManager() {
         id: docId,
         filename: doc ? doc.filename : 'documento',
         content: text,
+        normalized: Boolean(normalizedMode),
       })
     } catch (err) {
       console.error(err)
-      showMsg('Impossibile leggere il documento: ' + String(err.message), 'error')
+      showMsg((normalizedMode ? 'File normalizzato non ancora disponibile: ' : 'Impossibile leggere il documento: ') + String(err.message), 'error')
     }
   }
 
@@ -328,7 +532,7 @@ export default function KBManager() {
                   <th scope="col" style={{ width: '120px' }}>Stato</th>
                   <th scope="col" style={{ width: '70px' }}>Chunk</th>
                   <th scope="col" style={{ width: '100px' }}>Aggiornato</th>
-                  <th scope="col" style={{ width: '100px' }}>Azioni</th>
+                  <th scope="col" style={{ width: '140px' }}>Azioni</th>
                 </tr>
               </thead>
               <tbody>
@@ -350,7 +554,9 @@ export default function KBManager() {
                       </td>
                       <td><span className="format-badge">{doc.format || 'N/D'}</span></td>
                       <td>
-                        <span className={'badge ' + st.cls}>
+                        <span className={'badge ' + st.cls}
+                          title={statusTooltip(doc, st)}
+                          aria-label={statusTooltip(doc, st)}>
                           <span className="badge-dot" aria-hidden="true" />
                           {st.icon} {st.label}
                         </span>
@@ -367,6 +573,34 @@ export default function KBManager() {
                             onClick={function() { handleView(doc.id) }}
                             title="Visualizza">
                             <Eye size={14} />
+                          </button>
+                          <button className="kb-action-btn"
+                            onClick={function() { handleView(doc.id, true) }}
+                            title={normalizedViewTitle(doc)}
+                            aria-label="Vista sul file normalizzato"
+                            disabled={!canViewNormalized(doc.status)}>
+                            <Brain size={14} />
+                          </button>
+                          <button className="kb-action-btn"
+                            onClick={function() { handleReprocess(doc) }}
+                            title={reprocessTitle(doc, regenActive(doc.id))}
+                            aria-label="Riprocessa documento"
+                            disabled={!canReprocess(doc.status) || regenActive(doc.id)}>
+                            <RefreshCw size={14} />
+                          </button>
+                          <button className="kb-action-btn"
+                            onClick={function() { handleRegenWiki(doc) }}
+                            title={wikiTitle(doc, regenActive(doc.id))}
+                            aria-label="Rigenera wiki"
+                            disabled={!canViewNormalized(doc.status) || regenActive(doc.id)}>
+                            <BookOpen size={14} />
+                          </button>
+                          <button className="kb-action-btn"
+                            onClick={function() { handleRegenGraph(doc) }}
+                            title={graphTitle(doc, regenActive(doc.id))}
+                            aria-label="Rigenera grafo"
+                            disabled={!canViewNormalized(doc.status) || regenActive(doc.id)}>
+                            <Share2 size={14} />
                           </button>
                           <button className="kb-action-btn"
                             onClick={function() { handleDownload(doc.id) }}
@@ -401,6 +635,15 @@ export default function KBManager() {
             <div className="kb-viewer-header">
               <div>
                 <span className="kb-viewer-filename">{viewingDoc.filename}</span>
+                {viewingDoc.normalized && (
+                  <span
+                    className="kb-viewer-mode"
+                    title="Contenuto del file normalizzato salvato su disco dall'elaborazione"
+                  >
+                    <Brain size={12} style={{ verticalAlign: '-2px', marginRight: 4 }} aria-hidden="true" />
+                    Testo normalizzato
+                  </span>
+                )}
                 <span className="kb-viewer-meta">
                   {viewingDoc.content.split('\n').filter(function(l) { return l.trim().length > 0 }).length} righe ·
                   {(viewingDoc.content.length / 1024).toFixed(1)} KB

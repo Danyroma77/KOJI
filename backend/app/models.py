@@ -77,6 +77,9 @@ class DocumentCatalogEntry(BaseModel):
     metadata_tech: Optional[DocumentTechMeta] = None
     error_message: Optional[str] = None
     updated_at: str
+    # Artefatti derivati generati da job secondari (indipendenti dall'indicizzazione)
+    wiki_updated_at: Optional[str] = None
+    graph_updated_at: Optional[str] = None
 
 
 class DocumentListResponse(BaseModel):
@@ -99,6 +102,9 @@ class ActivityAction(str, Enum):
     EMBEDDING = "embedding"
     READY = "ready"
     ERROR = "error"
+    REPROCESSING = "reprocessing"
+    WIKI_GENERATED = "wiki_generated"
+    GRAPH_EXTRACTED = "graph_extracted"
 
 
 class ActivityEntry(BaseModel):
