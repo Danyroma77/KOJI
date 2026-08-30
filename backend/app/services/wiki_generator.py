@@ -206,6 +206,21 @@ class WikiGenerator:
             return json.loads(index_path.read_text(encoding="utf-8"))
         return {"groups": []}
 
+    def reset(self):
+        """Elimina tutte le pagine wiki e l'indice.
+
+        Invocato quando la Knowledge Base viene svuotata (e, per coerenza,
+        ogni volta che una rigenerazione non ha documenti pronti): la wiki
+        è un artefatto derivato e non deve sopravvivere ai suoi documenti.
+        """
+        if not self.wiki_dir.exists():
+            return
+        for f in self.wiki_dir.glob("*.md"):
+            f.unlink()
+        index_path = self.wiki_dir / "index.json"
+        if index_path.exists():
+            index_path.unlink()
+
 
 # Istanza singleton
 wiki_generator = WikiGenerator()

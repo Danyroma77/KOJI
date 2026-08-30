@@ -97,6 +97,25 @@ class VectorStore:
         self._bm25_docs = [d for d in self._bm25_docs if not d["id"].startswith(prefix)]
         self._rebuild_bm25_index()
 
+    def get_metadata_for_ids(self, ids: list[str]) -> dict[str, dict]:
+        """Ritorna {id: metadata} per gli ID richiesti via ChromaDB.
+
+        Usato quando un risultato proviene solo dall'indice BM25 (che non
+        conserva i metadati) e serve documento/posizione per le fonti.
+        """
+        if not ids:
+            return {}
+        self.initialize()
+        result: dict[str, dict] = {}
+        try:
+            got = self._collection.get(ids=ids, include=["metadatas"])
+            if got and got.get("ids"):
+                for id_, meta in zip(got["ids"], got["metadatas"] or []):
+                    result[id_] = meta or {}
+        except Exception:
+            pass
+        return result
+
     def dense_search(self, query_embedding: list[float], top_k: int = 10) -> list[dict]:
         """Ricerca vettoriale densa con HNSW.
 

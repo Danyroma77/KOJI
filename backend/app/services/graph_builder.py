@@ -13,19 +13,22 @@ from app.config import settings
 from app.services.llm_manager import llm_manager
 
 
-GRAPH_EXTRACTION_PROMPT = """Analizza il testo ed estrai entità e relazioni.
+GRAPH_EXTRACTION_PROMPT = """Analizza il TESTO ed estrai entità e relazioni tra loro.
 Restituisci SOLO un array JSON di oggetti con formato:
 [{{"subject": "...", "predicate": "...", "object": "...", "subject_type": "...", "object_type": "...", "confidence": 0.9}}]
 
 Regole:
-- Le entità devono essere nominate ESPPLICITAMENTE nel testo (nomi propri, termini tecnici, concetti citati). NON inventare entità
-- Il campo type descrive la natura dell'entità così come emerge dal testo stesso: NON usare categorie predefinite, la tassonomia è libera
+- "subject" e "object" sono CITAZIONI LETTERALI del TESTO: copia la sequenza di caratteri esattamente come appare (stesse parole, stesso idioma, stesso stato singular/plurale). NON parafrasare, NON tradurre, NON completare, NON usare conoscenze esterne
+- Ogni entità è una denominazione specifica citata nel testo: nomi propri, nomi di componenti/sistemi/documenti/procedure, termini tecnici concreti. NON inventare entità
+- NON usare come entità: parole generiche, verbi, intere frasi, i campi della risposta stessa ("subject", "predicate", "confidence")
+- "predicate" descrive la relazione esplicita tra le due entità con 1-4 parole (es. "configura", "fa parte di", "dipende da")
+- I campi *_type descrivono la natura dell'entità così come emerge dal testo: nessuna tassonomia predefinita, la tassonomia è libera
 - Estrai solo relazioni esplicite nel testo, non inferite
 - subject e object devono essere diversi tra loro
-- La confidence deve riflettere la certezza che la relazione esista nel testo (0.0-1.0)
+- La confidence (0.0-1.0) riflette la certezza che la relazione sia dichiarata nel testo
 - Ignora riferimenti generici senza denominazione specifica (articoli, pronomi, ruoli anonimi)
 - Se non ci sono entità o relazioni significative, restituisci []
-- Massimo 15 triple per testo
+- Massimo 15 triple per testo. Nessun testo fuori dall'array JSON
 
 TESTO:
 {text}"""
@@ -37,7 +40,30 @@ GRAPH_DEDUP_SIMILARITY_THRESHOLD = 0.92
 _INVALID_LABELS = {
     "entità a", "entità b", "entita a", "entita b", "entity a", "entity b",
     "tipoa", "tipob", "type a", "type b", "n/a", "null", "none", "unknown",
+    "testo", "text", "subject", "object", "predicate", "confidence",
+    "subject_type", "object_type",
 }
+
+# Parole funzionali (it/en): un'etichetta composta SOLO da queste non è
+# una denominazione di entità. Lista generica, nessuna tassonomia di dominio.
+_STOPWORD_TOKENS = frozenset({
+    # italiano
+    "il", "lo", "la", "i", "gli", "le", "un", "uno", "una", "di", "a", "da",
+    "in", "con", "su", "per", "tra", "fra", "e", "ed", "o", "od", "ma", "se",
+    "come", "che", "chi", "non", "più", "del", "dello", "della", "dei",
+    "delle", "degli", "al", "allo", "alla", "ai", "agli", "alle", "dal",
+    "dallo", "dalla", "dai", "dagli", "dalle", "nel", "nello", "nella",
+    "nei", "negli", "nelle", "sul", "sullo", "sulla", "sui", "sugli",
+    "sulle", "col", "cui", "questo", "questa", "questi", "queste", "quello",
+    "quella", "quelli", "quelle", "sono", "essere", "ha", "hanno", "viene",
+    "vengono", "può", "possono", "deve", "devono", "si", "no", "anche",
+    "molto", "più", "dove", "quando", "perché", "quindi", "ossia", "cioè",
+    # inglese
+    "the", "a", "an", "of", "to", "in", "on", "for", "and", "or", "but",
+    "is", "are", "was", "were", "be", "been", "have", "has", "had", "with",
+    "by", "from", "this", "that", "these", "those", "it", "its", "as", "at",
+    "not", "can", "may", "must", "will", "shall", "into", "onto", "via",
+})
 
 
 class GraphBuilder:
@@ -45,34 +71,55 @@ class GraphBuilder:
 
     def __init__(self):
         self.graph_file = settings.GRAPH_FILE
-        self._graph = None
 
     def _load_graph(self) -> dict:
-        """Carica il grafo dal disco o inizializza vuoto."""
-        if self._graph is not None:
-            return self._graph
+        """Carica il grafo dal disco — fonte di verità condivisa API/worker.
 
+        Nessuna cache in memoria: API e worker sono processi separati e il
+        rebuild può azzerare il file mentre il worker estrae. Rileggere a
+        ogni accesso evita di resuscitare entità non più corrette da uno
+        stato stantio (nodi di documenti eliminati o di dataset precedenti).
+        """
         if self.graph_file.exists():
-            self._graph = json.loads(self.graph_file.read_text(encoding="utf-8"))
-        else:
-            self._graph = {"nodes": [], "edges": []}
-        return self._graph
+            try:
+                return json.loads(self.graph_file.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
+        return {"nodes": [], "edges": []}
 
-    def _save_graph(self):
+    def _save_graph(self, graph: dict):
         """Salva il grafo su disco."""
         self.graph_file.parent.mkdir(parents=True, exist_ok=True)
         self.graph_file.write_text(
-            json.dumps(self._graph, ensure_ascii=False, indent=2),
+            json.dumps(graph, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 
-    async def extract_from_document(self, doc_id: str, text: str, title: str) -> int:
+    def reset(self):
+        """Azzera completamente il grafo (file su disco).
+
+        Usato dal rebuild per rigenerare il grafo a runtime SOLO dalle
+        entità estratte dai documenti correnti: elimina eventuali residui
+        stagni (nodi di documenti eliminati o di dataset precedenti) che
+        referenziano entità non più corrette.
+        """
+        if self.graph_file.exists():
+            self.graph_file.unlink()
+
+    async def extract_from_document(self, doc_id: str, text: str, title: str,
+                                    progress_cb=None) -> int:
         """Estrae triple da un documento usando il LLM.
+
+        Le entità sono generate a runtime e ancorate al testo del documento:
+        con GRAPH_REQUIRE_GROUNDING attivo una triple viene accettata solo se
+        subject e object compaiono testualmente nel documento (nessuna entità
+        inventata dal modello).
 
         Args:
             doc_id: ID del documento.
             text: Testo normalizzato.
             title: Titolo del documento.
+            progress_cb: Callback opzionale (done, total) per il progresso.
 
         Returns:
             Numero di triple estratte.
@@ -81,9 +128,12 @@ class GraphBuilder:
 
         # Dividi il testo in segmenti per non superare il contesto
         segments = self._split_for_extraction(text)
+        # Testo completo del documento (normalizzato) per il grounding
+        corpus = self._normalize_for_grounding(text)
 
         all_triples = []
-        for segment in segments:
+        total = len(segments)
+        for idx, segment in enumerate(segments):
             prompt = GRAPH_EXTRACTION_PROMPT.format(text=segment)
             try:
                 response = await llm_manager.generate(
@@ -94,11 +144,32 @@ class GraphBuilder:
                 triples = self._parse_response(response)
                 all_triples.extend(triples)
             except Exception as e:
-                print(f"[GraphBuilder] Errore estrazione da {doc_id}: {e}")
+                print(f"[GraphBuilder] Errore estrazione da {doc_id} "
+                      f"(segmento {idx + 1}/{total}): {e}")
+            if progress_cb:
+                try:
+                    progress_cb(idx + 1, total)
+                except Exception:
+                    pass
 
-        # Filtra per confidence
+        # Filtra per confidence e valida l'ancoraggio al testo del documento
         threshold = settings.GRAPH_CONFIDENCE_THRESHOLD
-        filtered = [t for t in all_triples if t.get("confidence", 0) >= threshold]
+        require_grounding = bool(getattr(settings, "GRAPH_REQUIRE_GROUNDING", True))
+        filtered = []
+        rejected = 0
+        for t in all_triples:
+            if t.get("confidence", 0) < threshold:
+                continue
+            if require_grounding and not (
+                self._is_grounded(t["subject"], corpus)
+                and self._is_grounded(t["object"], corpus)
+            ):
+                rejected += 1
+                continue
+            filtered.append(t)
+        if rejected:
+            print(f"[GraphBuilder] {doc_id}: {rejected} triple scartate "
+                  f"(entità non presente nel testo del documento)")
 
         # Deduplica nodi e aggiungi al grafo
         added = 0
@@ -121,7 +192,7 @@ class GraphBuilder:
                 })
                 added += 1
 
-        self._save_graph()
+        self._save_graph(graph)
         return added
 
     def _add_node(self, graph: dict, label: str, type_: str, doc_id: str) -> dict:
@@ -175,35 +246,142 @@ class GraphBuilder:
         return segments
 
     def _parse_response(self, response: str) -> list[dict]:
-        """Parse della risposta LLM in triple."""
-        # Estrai JSON dalla risposta
-        json_match = re.search(r'\[.*\]', response, re.DOTALL)
-        if not json_match:
+        """Parse tollerante della risposta LLM in triple validate.
+
+        Regge a output con testo fuori dal JSON, recinti markdown e
+        troncamenti: gli oggetti ricostruibili vengono recuperati uno a uno.
+        Ogni etichetta viene normalizzata e VALIDATA; il grounding verbatim
+        sul testo completo del documento avviene in extract_from_document.
+        """
+        payload = self._extract_json_array(response)
+        if not payload:
             return []
 
-        try:
-            triples = json.loads(json_match.group())
-            # Valida formato: nessuna tassonomia predefinita. Vengono scartate
-            # triple malformate o con entità segnaposto/fittizie.
-            valid = []
-            for t in triples:
-                if not all(k in t for k in ("subject", "predicate", "object")):
-                    continue
-                if not self._valid_entity_label(t["subject"]) or not self._valid_entity_label(t["object"]):
-                    continue
-                # Soggetto e oggetto coincidenti non rappresentano una relazione
-                if t["subject"].strip().lower() == t["object"].strip().lower():
-                    continue
-                t.setdefault("subject_type", "")
-                t.setdefault("object_type", "")
-                t.setdefault("confidence", 0.7)
-                valid.append(t)
-            return valid
-        except json.JSONDecodeError:
-            return []
+        valid = []
+        seen = set()
+        for t in payload:
+            if not isinstance(t, dict):
+                continue
+            subject = self._sanitize_label(t.get("subject"))
+            obj = self._sanitize_label(t.get("object"))
+            predicate = self._sanitize_label(t.get("predicate"), is_predicate=True)
+            if not subject or not obj or not predicate:
+                continue
+            # Soggetto e oggetto coincidenti non rappresentano una relazione
+            if subject.lower() == obj.lower():
+                continue
+            try:
+                confidence = float(t.get("confidence", 0.7))
+            except (TypeError, ValueError):
+                confidence = 0.7
+            confidence = max(0.0, min(1.0, confidence))
+            key = (subject.lower(), predicate.lower(), obj.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            valid.append({
+                "subject": subject,
+                "predicate": predicate,
+                "object": obj,
+                "subject_type": self._sanitize_type(t.get("subject_type")),
+                "object_type": self._sanitize_type(t.get("object_type")),
+                "confidence": confidence,
+            })
+        return valid
 
     @staticmethod
-    def _valid_entity_label(label) -> bool:
+    def _extract_json_array(response: str) -> Optional[list]:
+        """Estrae il primo array JSON dalla risposta del modello.
+
+        Gestisce recinti markdown, testo prima/dopo l'array e output
+        troncato (in tal caso recupera i singoli oggetti riconoscibili).
+        """
+        if not isinstance(response, str) or not response.strip():
+            return None
+        text = response.strip()
+
+        candidates = re.findall(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.DOTALL)
+        start = text.find("[")
+        if start != -1:
+            candidates.append(text[start:text.rfind("]") + 1])
+
+        for candidate in candidates:
+            try:
+                data = json.loads(candidate)
+                if isinstance(data, list):
+                    return data
+            except json.JSONDecodeError:
+                continue
+
+        # Salvataggio per output troncato/malformato: oggetti validi sparsi
+        region = text[start:] if start != -1 else text
+        objects = []
+        for match in re.finditer(r"\{[^{}]*\}", region, re.DOTALL):
+            try:
+                obj = json.loads(match.group())
+                if isinstance(obj, dict):
+                    objects.append(obj)
+            except json.JSONDecodeError:
+                continue
+        return objects or None
+
+    def _sanitize_label(self, value, is_predicate: bool = False) -> Optional[str]:
+        """Normalizza e valida un'etichetta proveniente dal LLM.
+
+        Rimuove residui di sintassi JSON/markdown, spazi ridondanti e
+        punteggiatura ai bordi; scarta segnaposto, etichette eccessivamente
+        lunghe e composizioni di sole parole funzionali. Per i predicati la
+        validazione è più permissiva (verbi brevi come "è" sono legittimi).
+        """
+        if not isinstance(value, str):
+            return None
+        cleaned = value.strip().strip("\"'`«»“”‘’").strip()
+        cleaned = re.sub(r"[\[\]{}]", "", cleaned)          # residui JSON
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()      # spazi interni
+        cleaned = cleaned.strip(" .;:,!?–—|/\\").strip()    # punteggiatura bordo
+        min_len = 1 if is_predicate else 2
+        if not self._valid_entity_label(cleaned, min_len=min_len):
+            return None
+        max_len = int(getattr(settings, "GRAPH_MAX_ENTITY_CHARS", 60))
+        if len(cleaned) > max_len:
+            return None
+        tokens = re.findall(r"[\wà-ÿ]+", cleaned, re.IGNORECASE)
+        if not is_predicate and tokens and \
+                all(tok.lower() in _STOPWORD_TOKENS for tok in tokens):
+            return None
+        return cleaned
+
+    @staticmethod
+    def _sanitize_type(value) -> str:
+        """Normalizza il tipo libero descritto dal LLM (nessuna tassonomia)."""
+        if not isinstance(value, str):
+            return "Non classificato"
+        cleaned = re.sub(r"\s+", " ", value.strip()).strip(" .;:,!?")
+        if not cleaned or len(cleaned) > 60:
+            return "Non classificato"
+        return cleaned
+
+    @staticmethod
+    def _normalize_for_grounding(text: str) -> str:
+        """Normalizza il testo per il confronto verbatim (grounding)."""
+        text = text.lower().replace("\u2019", "'").replace("\u2018", "'")
+        text = text.replace("\u00a0", " ")
+        return re.sub(r"\s+", " ", text)
+
+    def _is_grounded(self, label: str, corpus: str) -> bool:
+        """True se l'etichetta compare testualmente nel documento.
+
+        Confronto su testo normalizzato (minuscole, spazi collassati,
+        apostrofi uniformati): garantisce che il grafo referenzi solo
+        entità realmente presenti nei contenuti, generate a runtime.
+        """
+        needle = self._normalize_for_grounding(label).strip()
+        if not needle:
+            return False
+        return needle in corpus
+
+    @staticmethod
+    def _valid_entity_label(label, min_len: int = 2) -> bool:
         """True se l'etichetta è una denominazione plausibile di entità.
 
         Controllo puramente strutturale (lunghezza, contenuto, segnaposto
@@ -212,7 +390,7 @@ class GraphBuilder:
         if not isinstance(label, str):
             return False
         cleaned = label.strip()
-        if len(cleaned) < 2 or len(cleaned) > 80:
+        if len(cleaned) < min_len or len(cleaned) > 80:
             return False
         if cleaned.lower() in _INVALID_LABELS:
             return False
@@ -266,7 +444,7 @@ class GraphBuilder:
             and e["target"] not in nodes_to_remove
         ]
 
-        self._save_graph()
+        self._save_graph(graph)
 
     def get_graph(self) -> dict:
         """Restituisce il grafo completo."""

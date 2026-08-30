@@ -28,11 +28,42 @@ async def get_node_detail(node_id: str):
 
 
 @router.post("/rebuild")
-async def rebuild_graph():
-    """Ricostruisce il grafo da tutti i documenti processati (operazione lunga)."""
+async def rebuild_graph(reset: bool = True):
+    """Rigenera il grafo a runtime da tutti i documenti processati.
+
+    Con reset=true (default) il grafo esistente viene azzerato PRIMA della
+    ri-estrazione: nessuna entità stantia sopravvive — il nuovo grafo
+    contiene solo entità estratte dai documenti correnti e ancorate al
+    loro testo. Ogni documento viene riprocessato come job separato per
+    non bloccare l'API; stato consultabile via /api/jobs/{job_id}.
+    """
+    from app.services.job_queue import job_queue
     from app.routers.documents import _load_catalog
-    from app.services.graph_builder import graph_builder
 
     catalog = _load_catalog()
-    # In produzione: avviare come background task
-    return {"status": "not_implemented", "message": "Usare il processing documenti per aggiornare il grafo"}
+    ready_docs = [d for d in catalog.get("documents", [])
+                  if d.get("status") == "ready"]
+    if not ready_docs:
+        if reset:
+            graph_builder.reset()
+        return {"status": "ok", "job_id": None, "reset": reset,
+                "message": "Nessun documento pronto per l'estrazione del grafo"}
+
+    if reset:
+        graph_builder.reset()
+
+    jobs = []
+    for doc in ready_docs:
+        job = job_queue.enqueue("generate_graph", {
+            "doc_id": doc["id"],
+            "filename": doc.get("filename", "documento"),
+        })
+        jobs.append(job.id)
+
+    return {
+        "status": "ok",
+        "job_ids": jobs,
+        "reset": reset,
+        "message": f"Rigenerazione runtime del grafo avviata per {len(jobs)} documenti"
+                   + (" (grafo azzerato, entità ri-estratte dal testo)" if reset else ""),
+    }

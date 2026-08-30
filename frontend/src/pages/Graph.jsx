@@ -200,7 +200,13 @@ export default function Graph() {
               <label key={type} className="graph-checkbox">
                 <input type="checkbox" checked={filters[type] !== false}
                   onChange={e => setFilters(prev => ({ ...prev, [type]: e.target.checked }))} />
-                <span style={{ color: typeColors[type] }}>{type}</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  {/* Colore del tipo come puntino decorativo: il testo resta
+                      in colore leggibile (AA) — la palette contiene toni scuri
+                      illeggibili come testo su sfondo scuro */}
+                  <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: '50%', background: typeColors[type], flexShrink: 0 }} />
+                  {type}
+                </span>
               </label>
             ))}
           </div>
@@ -220,7 +226,7 @@ export default function Graph() {
               Caricamento grafo...
             </div>
           ) : error ? (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--jeeg-red)', textAlign: 'center', padding: '2rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--red-text)', textAlign: 'center', padding: '2rem' }}>
               <Network size={32} style={{ display: 'block', margin: '0 auto 1rem', opacity: 0.5 }} />
               <p>{error}</p>
             </div>

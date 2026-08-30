@@ -4,6 +4,7 @@ Eseguito su CPU in batch con cache su disco.
 """
 
 from __future__ import annotations
+import asyncio
 import json
 import hashlib
 import os
@@ -77,13 +78,34 @@ class EmbeddingService:
         return results
 
     def embed_query(self, query: str) -> list[float]:
-        """Genera embedding per una singola query."""
+        """Genera embedding per una singola query (CHIAMATA BLOCCANTE)."""
         embedding = self.model.encode(
             [query],
             show_progress_bar=False,
             normalize_embeddings=True,
         )
         return embedding[0].tolist()
+
+    async def embed_query_async(self, query: str) -> list[float]:
+        """Embedding di una query FUORI dall'event loop.
+
+        sentence-transformers gira su PyTorch/ONNX: il primo load può
+        scaricare i pesi da HuggingFace e l'encode è CPU-bound. Chiamato
+        in modo sincrono dentro un handler async congela l'event loop →
+        le risposte (SSE RAG comprese) non partono mai e il client resta
+        "bloccato". Qui l'encode gira in un thread con timeout esplicito:
+        in caso di problema l'errore arriva al client, non un silenzio.
+        """
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self.embed_query, query),
+                timeout=settings.EMBEDDING_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            raise RuntimeError(
+                f"Embedding non completato entro {settings.EMBEDDING_TIMEOUT}s "
+                f"(modello '{settings.EMBEDDING_MODEL}')"
+            )
 
     def _get_cache_key(self, text: str, chunk_id: str = None) -> str:
         """Genera chiave di cache basata su contenuto o ID chunk."""

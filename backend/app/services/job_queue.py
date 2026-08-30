@@ -45,10 +45,24 @@ class Job:
             "created_at": self.created_at,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
+            "duration_s": self.duration_s,
             "error": self.error,
             "progress": round(self.progress, 2),
             "result": self.result,
         }
+
+    @property
+    def duration_s(self) -> float | None:
+        """Durata in secondi: determinata se esiste un timestamp di fine."""
+        if self.completed_at and self.started_at:
+            try:
+                from datetime import datetime
+                start = datetime.fromisoformat(self.started_at)
+                end = datetime.fromisoformat(self.completed_at)
+                return round((end - start).total_seconds(), 3)
+            except (ValueError, TypeError):
+                return None
+        return None
 
     @classmethod
     def from_dict(cls, data):
@@ -134,6 +148,20 @@ class JobQueue:
                 self._save_job(job)
                 count += 1
             return count
+
+    def retry_job(self, job_id: str) -> bool:
+        """Rimette in coda un singolo job fallito. Ritorna True se riaccedato."""
+        with self._lock:
+            job = self.get_job(job_id)
+            if not job or job.status != JobStatus.FAILED:
+                return False
+            job.status = JobStatus.PENDING
+            job.started_at = None
+            job.completed_at = None
+            job.error = None
+            job.progress = 0.0
+            self._save_job(job)
+            return True
 
     def cancel_pending_for_doc(self, doc_id, reason: str = None):
         """Annulla i job pendenti di un documento (es. dopo la sua eliminazione).

@@ -1,0 +1,384 @@
+﻿
+REQUISITI DI SVILUPPO
+KNOWLEDGE PLATFORM LOCALE
+Backend – Specifica operativa v0.1
+Campo
+Valore
+Base
+Ultima versione della tesi disponibile
+Interfaccia
+Già realizzata; solo integrazione API
+Struttura
+Già definita
+Focus
+Completamento backend e integrazione end-to-end
+Hardware
+Lenovo ThinkBook 13s; i5-1135G7; 16 GB DDR4; Intel Iris Xe; SSD 512 GB
+1. Scopo
+Questo documento traduce la tesi in una specifica operativa per lo sviluppo. Non modifica l'indice della tesi e non riprogetta l'interfaccia già realizzata. Definisce invece servizi backend, API, dati, pipeline, integrazioni, criteri di accettazione e ordine di implementazione necessari per trasformare l'architettura progettata in una piattaforma funzionante.
+2. Perimetro
+Area
+Stato
+Azione
+Frontend / UI
+REALIZZATO
+Integrare con backend
+Struttura applicativa
+DEFINITA
+Mantenere
+API FastAPI
+DA COMPLETARE
+Endpoint + validazione + error handling
+Processing documenti
+DA COMPLETARE
+Parsing, normalizzazione, chunking
+Knowledge Base
+DA COMPLETARE
+Catalogo + file + chunk + indici
+Retrieval
+DA COMPLETARE
+BM25, Dense, Hybrid, RRF, reranking
+RAG
+DA COMPLETARE
+Ollama + context + SSE + citazioni
+Wiki / Graph
+DA COMPLETARE
+Generazione e aggiornamento
+Monitoring
+DA COMPLETARE
+Metriche runtime
+Benchmark
+DA COMPLETARE
+Run riproducibili e risultati
+3. Architettura backend
+Frontend → FastAPI → Core Knowledge Management → Processing / Retrieval / Generation → Ollama / ChromaDB / File Store / NetworkX
+Componenti previsti: API Layer, Document Service, Parser, Normalizer, Chunk Manager, Embedding Service, Vector Store, BM25 Retriever, Hybrid Retriever, Reranker, RAG Engine, LLM Manager, Wiki Generator, Graph Builder, Monitoring Service, Benchmark Service e File Store.
+4. Requisiti funzionali
+ID
+Funzione
+Cosa deve fare
+Priorità
+BE-RF-01
+Upload multi-file
+Ricevere file supportati e assegnare ID univoco.
+P0
+BE-RF-02
+Validazione
+Controllare estensione, MIME, dimensione e integrità.
+P0
+BE-RF-03
+Parsing
+Estrarre testo e metadati preservando la struttura.
+P0
+BE-RF-04
+OCR
+Gestire PDF scansionati tramite OCR quando necessario.
+P1
+BE-RF-05
+Normalizzazione
+Produrre Markdown normalizzato mantenendo il legame con l'originale.
+P0
+BE-RF-06
+Chunking
+Chunk configurabili; default iniziale 512 token / 20% overlap.
+P0
+BE-RF-07
+Embedding
+Generare embedding con batch e cache.
+P0
+BE-RF-08
+Indicizzazione
+Indicizzare ChromaDB e indice BM25.
+P0
+BE-RF-09
+Gestione KB
+Elencare, modificare metadati, scaricare ed eliminare documenti.
+P0
+BE-RF-10
+Job status
+Esporre queued/running/completed/error con durata e errore.
+P0
+BE-RF-11
+Aggiornamento incrementale
+Aggiornare artefatti derivati dopo modifica/eliminazione.
+P1
+BE-RF-12
+Dense search
+Similarity search con score e metadati.
+P0
+BE-RF-13
+BM25 search
+Ricerca lessicale con ranking.
+P0
+BE-RF-14
+Hybrid search
+Fusione Dense + BM25 tramite RRF.
+P0
+BE-RF-15
+Reranking
+Cross-encoder sui candidati, se configurato.
+P1
+BE-RF-16
+RAG
+Query → retrieval → context → LLM → risposta + citazioni.
+P0
+BE-RF-17
+Streaming
+Inviare token progressivamente tramite SSE.
+P0
+BE-RF-18
+Model manager
+Elencare, selezionare e cambiare modello senza riavvio.
+P0
+BE-RF-19
+Wiki
+Generare e aggiornare pagine Markdown navigabili.
+P1
+BE-RF-20
+Knowledge Graph
+Estrarre entità/relazioni e serializzare il grafo.
+P1
+BE-RF-21
+Monitoring
+CPU, RAM, eventuale VRAM, throughput, first-token, retrieval e servizi.
+P0
+BE-RF-22
+Benchmark
+Eseguire configurazioni sperimentali e salvare risultati.
+P1
+BE-RF-23
+Configurazione
+Gestire chunking, embedding, retrieval, HNSW, KG e polling.
+P1
+BE-RF-24
+Health check
+Verificare backend e dipendenze locali.
+P0
+5. Requisiti non funzionali
+ID
+Vincolo
+Descrizione
+BE-RNF-01
+Local-first
+Nessuna dipendenza cloud per AI, storage o retrieval.
+BE-RNF-02
+Privacy
+Dati e artefatti restano sul dispositivo.
+BE-RNF-03
+Riproducibilità
+Configurazioni e parametri devono essere registrabili/esportabili.
+BE-RNF-04
+Persistenza
+Riavvio senza perdita di KB e indici persistiti.
+BE-RNF-05
+Fault tolerance
+Errore su un documento non blocca gli altri job.
+BE-RNF-06
+Idempotenza
+Ripetere l'indicizzazione non crea duplicati.
+BE-RNF-07
+Osservabilità
+Ogni job registra stato, timestamp, durata ed errore.
+BE-RNF-08
+Configurabilità
+Parametri sperimentali modificabili senza cambiare codice.
+BE-RNF-09
+Risorse
+Progettazione coerente con 16 GB RAM e CPU target.
+BE-RNF-10
+Sicurezza
+Validazione input e protezione da path traversal/upload arbitrari.
+6. API REST iniziali
+HTTP
+Endpoint
+Funzione
+GET
+/api/health
+Stato backend e dipendenze
+GET
+/api/system
+Informazioni hardware/risorse
+GET
+/api/models
+Modelli locali
+POST
+/api/models/select
+Selezione modello attivo
+POST
+/api/documents
+Upload documenti
+GET
+/api/documents
+Elenco documenti
+GET
+/api/documents/{id}
+Dettaglio
+PATCH
+/api/documents/{id}
+Metadati
+GET
+/api/documents/{id}/download
+Download
+DELETE
+/api/documents/{id}
+Eliminazione
+GET
+/api/jobs/{id}
+Stato processing
+POST
+/api/search
+BM25/Dense/Hybrid
+GET
+/api/rag/stream
+RAG streaming SSE
+GET
+/api/wiki
+Elenco Wiki
+GET
+/api/wiki/{id}
+Pagina Wiki
+POST
+/api/wiki/rebuild
+Rigenerazione Wiki
+GET
+/api/graph
+Grafo JSON
+POST
+/api/graph/rebuild
+Rigenerazione Graph
+GET
+/api/monitoring/live
+Metriche correnti
+GET
+/api/config
+Configurazione
+PATCH
+/api/config
+Aggiornamento configurazione
+POST
+/api/benchmarks/run
+Avvio benchmark
+GET
+/api/benchmarks/{id}
+Stato/risultati
+7. Pipeline documentale
+UPLOAD → VALIDATE → PARSE → NORMALIZE → METADATA → CHUNK → EMBED → INDEX → WIKI/KG → COMPLETE
+Fase
+Output
+Validate
+File accettato/rifiutato
+Parse
+Testo + metadati
+Normalize
+Markdown normalizzato
+Metadata
+Metadati standardizzati + hash
+Chunk
+Chunk con posizione e metadata
+Embed
+Vettori + cache
+Index
+ChromaDB + BM25
+Derivation
+Wiki + Knowledge Graph
+Complete
+Job concluso e osservabile
+8. Pipeline RAG
+QUERY → BM25 + DENSE → RRF → TOP-K → RERANKING (opzionale) → CONTEXT → PROMPT → OLLAMA → RESPONSE + CITATIONS
+Parametro
+Valore iniziale
+dense_top_k
+10
+bm25_top_k
+10
+rerank_top_k
+20
+context_top_k
+5
+retrieval_mode
+hybrid
+temperature
+da fissare nel protocollo sperimentale
+max_tokens
+da fissare nel protocollo sperimentale
+9. Gestione modelli
+Il backend deve interrogare Ollama per rilevare i modelli disponibili e non deve hard-codificare la lista dei modelli sperimentali. La UI deve ricevere almeno nome, famiglia, dimensione, quantizzazione e stato. La selezione deve essere modificabile senza riavviare la piattaforma.
+10. Aggiornamento incrementale
+Alla modifica di un documento il backend deve identificare la versione precedente, rimuoverne gli artefatti derivati e generare quelli della nuova versione. Alla cancellazione devono essere rimossi chunk, embedding, riferimenti BM25, pagine Wiki e nodi/relazioni Graph associati. Gli artefatti devono mantenere document_id e hash/versione.
+11. Monitoring
+Categoria
+Metriche minime
+Sistema
+CPU %, RAM, eventuale VRAM
+LLM
+Modello, token/s, first-token latency, durata
+Retrieval
+Latenza, numero risultati, dimensione indice
+Processing
+Durata per fase, job in coda/completati/falliti
+Servizi
+Ollama, ChromaDB/store, filesystem, backend
+Benchmark
+Esperimento, configurazione, dataset, metriche, durata
+12. Benchmark
+Esperimento
+Backend richiesto
+Output
+E1 – Confronto LLM
+Model manager + RAG + monitoring
+Qualità, latency, throughput, RAM
+E2 – Quantizzazione
+Model manager + monitoring
+Confronto quantizzazioni compatibili
+E3 – Originale vs normalizzato
+Parser + normalizer + RAG
+Differenze retrieval/generazione
+E4 – BM25 vs Dense vs Hybrid
+Tre retriever + metriche
+Recall/MRR/nDCG + latency
+E5 – LLM vs RAG
+Direct LLM + RAG
+Qualità/grounding/hallucination
+E6 – KB/Wiki/Graph
+Derivation + query
+Confronto rappresentazioni
+E7 – Scalabilità
+Processing + indexing + monitoring
+RAM/tempo al crescere della KB
+13. Criteri di accettazione MVP backend
+Upload e identificazione univoca di un documento.
+Processing osservabile fino a completed/error.
+Parsing e normalizzazione producono un artefatto persistito.
+Documento indicizzato e ricercabile con BM25 e Dense.
+Hybrid Retrieval produce una classifica unica.
+Query RAG restituisce risposta e fonti.
+Streaming SSE funziona.
+Modello attivo modificabile senza riavvio.
+Eliminazione rimuove gli artefatti derivati.
+Metriche CPU/RAM/latency/throughput disponibili.
+Riavvio senza perdita della conoscenza persistita.
+Errore di un job isolato dagli altri.
+14. Ordine di sviluppo
+1. Fondazioni: FastAPI, config, logging, error handling, health check.
+2. Document management: upload, catalogo, filesystem, metadati, job.
+3. Processing: parser, normalizer, chunk manager, pipeline asincrona.
+4. Embedding + indici: embedding, cache, ChromaDB, BM25.
+5. Search: Dense, BM25, Hybrid, RRF.
+6. RAG: context, prompt, Ollama, SSE, citazioni.
+7. Model manager: discovery, load/unload, selezione.
+8. Wiki + Graph: generazione, API, aggiornamento.
+9. Monitoring: metriche e telemetria.
+10. Benchmark: run riproducibili e salvataggio risultati.
+11. Hardening: idempotenza, sicurezza, test e documentazione.
+15. Questioni da congelare prima del benchmark
+Lista definitiva dei modelli LLM e relative quantizzazioni.
+Embedding model definitivo.
+Dataset e ground truth definitivi.
+Formato definitivo per catalogo, job e risultati benchmark.
+Reranker definitivo.
+Parametri finali di chunking, RRF, reranking e context.
+Metriche effettivamente utilizzate per ciascun esperimento.
+Eventuale autenticazione/gestione utenti: non è attualmente un requisito esplicito della tesi e va trattata separatamente.
+16. Nota
+I valori prestazionali presenti nella tesi (throughput, latenza, tempi di parsing, consumo RAM, capacità a 5.000 documenti) devono essere trattati come target o ipotesi finché non vengono misurati sul Lenovo ThinkBook 13s nelle condizioni definite dal protocollo sperimentale.
+

@@ -305,11 +305,11 @@ export default function KBManager() {
       return
     }
     var msg = 'Svuotare la Knowledge Base? Verranno eliminati TUTTI i ' + n +
-      ' documenti con i loro chunk, embedding e pagine wiki. Operazione irreversibile.'
+      ' documenti con i loro chunk, embedding, pagine wiki e grafo di conoscenza. Operazione irreversibile.'
     if (!confirm(msg)) return
     setClearing(true)
     deleteAllDocuments().then(function(result) {
-      showMsg('KB svuotata: ' + String(result.removed) + ' documento/i rimossi', 'success')
+      showMsg('KB svuotata: ' + String(result.removed) + ' documento/i rimossi (wiki e grafo eliminati)', 'success')
       setViewingDoc(null)
       fetchDocs()
     }).catch(function(err) {
@@ -500,7 +500,7 @@ export default function KBManager() {
         </div>
         <button
           className="admin-btn admin-btn-secondary kb-clear-btn"
-          style={{ fontSize: 'var(--text-xs)', padding: '6px 12px', color: 'var(--jeeg-red)' }}
+          style={{ fontSize: 'var(--text-xs)', padding: '6px 12px', color: 'var(--red-text)' }}
           onClick={handleClearAll}
           disabled={clearing || docs.length === 0}
           title="Elimina tutti i documenti dalla Knowledge Base"

@@ -42,7 +42,9 @@ def process_document_job(job):
     from app.config import settings
     from app.routers.documents import _load_catalog, _save_catalog, _get_format
     from app.models import DocumentStatus, DocumentTechMeta, DocumentMetadata, ActivityAction
+    from app.services.metrics_store import metrics_store
     from pathlib import Path
+    import time
 
     doc_id = job.payload["doc_id"]
     filename = job.payload["filename"]
@@ -78,13 +80,23 @@ def process_document_job(job):
     # qui rende impossibile tutto il resto, quindi il job termina.
     try:
         logger.info("[%s] Parsing: %s", job.id, filename)
+        t_phase = time.time()
         file_bytes = raw_path.read_bytes()
         parse_result = parse_document(file_bytes, filename)
+        metrics_store.record_processing(
+            doc_id=doc_id, phase="parse",
+            duration_s=time.time() - t_phase, filename=filename,
+        )
         update_progress(1)
 
         logger.info("[%s] Normalizzazione", job.id)
+        t_phase = time.time()
         normalized_text = normalizer.normalize(parse_result.text)
         processed_path.write_text(normalized_text, encoding="utf-8")
+        metrics_store.record_processing(
+            doc_id=doc_id, phase="normalize",
+            duration_s=time.time() - t_phase, filename=filename,
+        )
         update_progress(2)
 
         logger.info("[%s] Metadati", job.id)
@@ -123,11 +135,17 @@ def process_document_job(job):
     chunks_count = None
     try:
         logger.info("[%s] Chunking", job.id)
+        t_phase = time.time()
         chunks = chunk_manager.chunk_text(normalized_text, doc_id)
         chunks_count = len(chunks)
+        metrics_store.record_processing(
+            doc_id=doc_id, phase="chunk",
+            duration_s=time.time() - t_phase, filename=filename,
+        )
         update_progress(4)
 
         logger.info("[%s] Embedding %d chunk", job.id, len(chunks))
+        t_phase = time.time()
         chunk_ids = [f"{c.doc_id}_{c.index}" for c in chunks]
         embeddings = embedding_service.embed_texts([c.text for c in chunks], chunk_ids)
 
@@ -141,6 +159,10 @@ def process_document_job(job):
         } for c in chunks]
 
         vector_store.add_chunks(chunks, embeddings, metadatas)
+        metrics_store.record_processing(
+            doc_id=doc_id, phase="embed_index",
+            duration_s=time.time() - t_phase, filename=filename,
+        )
         update_progress(5)
 
         for doc in catalog["documents"]:
@@ -240,7 +262,12 @@ def generate_graph_job(job):
         # gestisce internamente gli errori di singolo segmento.
         graph_builder.remove_by_doc(doc_id)
         n_triples = asyncio.run(
-            graph_builder.extract_from_document(doc_id, text, title)
+            graph_builder.extract_from_document(
+                doc_id, text, title,
+                progress_cb=lambda done, total: job_queue.update_progress(
+                    job.id, 0.1 + 0.85 * done / max(total, 1)
+                ),
+            )
         )
 
         _set_graph_ts()

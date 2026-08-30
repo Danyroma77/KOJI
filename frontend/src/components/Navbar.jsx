@@ -80,7 +80,7 @@ export default function Navbar() {
                   onClick={() => setMobileOpen(false)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: '10px',
-                    padding: '12px 16px', color: '#e8edf5', textDecoration: 'none',
+                    padding: '12px 16px', color: 'var(--text-primary)', textDecoration: 'none',
                     borderRadius: '8px', fontSize: '0.9rem'
                   }}
                 >

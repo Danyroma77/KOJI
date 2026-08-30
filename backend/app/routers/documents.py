@@ -20,6 +20,7 @@ from app.models import (
     DocumentUploadResponse, DocumentCatalogEntry, DocumentListResponse,
     DocumentStatus, DocumentFormat, DocumentMetadata, DocumentTechMeta,
     ActivityAction, ActivityEntry, ActivityListResponse,
+    DocumentMetadataUpdate,
 )
 from app.services.document_parser import parse_document, compute_sha256, get_parser
 from app.services.text_normalizer import normalizer
@@ -186,6 +187,14 @@ async def upload_documents(
             file_bytes = await file.read()
             doc_id = str(uuid.uuid4())[:8]
 
+            # Validazione dimensione (BE-RF-02): limite configurabile in MB
+            max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+            if len(file_bytes) > max_bytes:
+                raise ValueError(
+                    f"file troppo grande ({len(file_bytes) / (1024 * 1024):.1f} MB, "
+                    f"massimo {settings.MAX_UPLOAD_SIZE_MB} MB)"
+                )
+
             # Modifica: se un documento con lo stesso nome esiste già, la nuova
             # versione lo sostituisce (artefatti della vecchia versione rimossi)
             # e l'attività viene tracciata come "modified" invece di "uploaded".
@@ -254,6 +263,45 @@ async def list_documents():
     )
 
 
+@router.patch("/{doc_id}", response_model=DocumentCatalogEntry)
+async def update_document_metadata(doc_id: str, update: DocumentMetadataUpdate):
+    """Modifica i metadati di un documento (BE-RF-09).
+
+    Aggiorna i metadati structural (title, author, date, language, pages) e
+    semantic (topics, entities) del documento. Le modifiche sono immediate
+    sul catalogo; gli artefatti derivati (wiki/grafo) vengono rigenerati
+    tramite i job dedicati se necessario.
+    """
+    from datetime import datetime
+    catalog = _load_catalog()
+    doc = next((d for d in catalog["documents"] if d.get("id") == doc_id), None)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Documento {doc_id} non trovato")
+
+    changes = update.model_dump(exclude_unset=True)
+    structural_keys = {"title", "author", "date", "language", "pages"}
+
+    structural = dict(doc.get("metadata_structural") or {})
+    semantic = dict(doc.get("metadata_semantic") or {})
+    for key, value in changes.items():
+        if key in structural_keys:
+            structural[key] = value
+        elif key in ("topics", "entities"):
+            semantic[key] = value
+
+    doc["metadata_structural"] = structural
+    doc["metadata_semantic"] = semantic
+    doc["updated_at"] = datetime.now().isoformat()
+    _save_catalog(catalog)
+    activity_log.log(
+        ActivityAction.MODIFIED,
+        doc.get("filename", "documento"),
+        doc_id,
+        detail="metadati aggiornati",
+    )
+    return DocumentCatalogEntry(**doc)
+
+
 @router.get("/activities", response_model=ActivityListResponse)
 async def list_activities(
     limit: int = Query(default=20, ge=1, le=200),
@@ -285,8 +333,11 @@ async def list_activities(
 async def delete_all_documents(background_tasks: BackgroundTasks):
     """Svuota la Knowledge Base: elimina tutti i documenti con i loro artefatti.
 
-    Ogni rimozione viene tracciata nella cronologia attività (azione 'deleted'),
-    i job ancora in coda vengono annullati e la wiki viene rigenerata vuota.
+    Ogni rimozione viene tracciata nella cronologia attività (azione 'deleted')
+    e i job ancora in coda vengono annullati. Per logica, svuotando la KB
+    vengono eliminati ANCHE gli artefatti derivati: il grafo viene azzerato
+    (graph.json rimosso) e la wiki viene svuotata (pagine e indice) — non
+    vengono rigenerati, non avendo più documenti da cui derivare.
     Nota: la route è dichiarata prima di /{doc_id} per evitare che 'all'
     venga interpretato come un id documento.
     """
@@ -314,13 +365,17 @@ async def delete_all_documents(background_tasks: BackgroundTasks):
     catalog["documents"] = []
     _save_catalog(catalog)
 
-    # Rigenera la wiki in background (con la KB vuota la resetta)
-    background_tasks.add_task(_regenerate_wiki, catalog)
+    # Svuotamento garantito degli artefatti derivati: il grafo viene azzerato
+    # completamente (anche di eventuali nodi stanti non più referenziati) e la
+    # wiki viene svuotata. Nessuna rigenerazione: senza documenti non hanno
+    # da cosa derivare.
+    graph_builder.reset()
+    wiki_generator.reset()
 
     return {
         "status": "ok",
         "removed": len(docs),
-        "message": f"Rimossi {len(docs)} documenti dalla KB",
+        "message": f"Rimossi {len(docs)} documenti dalla KB (wiki e grafo eliminati)",
     }
 
 
@@ -529,7 +584,12 @@ async def regenerate_graph_for_document(doc_id: str):
 
 
 async def _regenerate_wiki(catalog: dict):
-    """Rigenera la wiki da tutti i documenti pronti."""
+    """Rigenera la wiki da tutti i documenti pronti.
+
+    Se non c'è alcun documento pronto (es. eliminato l'ultimo documento),
+    la wiki viene azzerata: è un artefatto derivato e non deve sopravvivere
+    ai documenti da cui era stata generata.
+    """
     docs_for_wiki = []
     for doc_entry in catalog["documents"]:
         if doc_entry["status"] != DocumentStatus.READY.value:
@@ -545,6 +605,8 @@ async def _regenerate_wiki(catalog: dict):
 
     if docs_for_wiki:
         wiki_generator.generate_all(docs_for_wiki)
+    else:
+        wiki_generator.reset()
 
 @router.get("/jobs")
 async def list_jobs(status: str = None):

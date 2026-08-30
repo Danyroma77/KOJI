@@ -12,8 +12,10 @@ import Admin from './pages/Admin'
 export default function App() {
   return (
     <div className="app-shell">
+      {/* Skip-link: primo elemento focalizzabile, presente su ogni pagina (WCAG 2.4.1) */}
+      <a href="#main-content" className="skip-link">Vai al contenuto principale</a>
       <Navbar />
-      <main id="main-content" className="main-content" role="main">
+      <main id="main-content" className="main-content">
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/rag" element={<RAG />} />

@@ -7,6 +7,8 @@
 :root {
   /* === Palette Jeeg === */
   --jeeg-green: #00A859;
+  --green-text: #00C96A;  /* testo verde, AA >= 5.39:1 */
+  --green-text-bright: #4DE598;  /* hover link, AA >= 8:1 */
   --jeeg-green-dark: #007D41;
   --jeeg-green-dim: rgba(0, 168, 89, 0.12);
   --jeeg-green-glow: rgba(0, 168, 89, 0.35);
@@ -14,10 +16,12 @@
   --jeeg-yellow-dim: rgba(255, 215, 0, 0.10);
   --jeeg-yellow-glow: rgba(255, 215, 0, 0.20);
   --jeeg-red: #D32F2F;
+  --red-text: #FA9C9C;    /* testo rosso, AA >= 5.80:1 */
   --jeeg-red-dim: rgba(211, 47, 47, 0.12);
   --jeeg-amber: #F5A623;
   --jeeg-amber-dim: rgba(245, 166, 35, 0.12);
   --jeeg-blue: #3B9EFF;
+  --blue-text: #5EB0FF;   /* testo blu, AA >= 5.14:1 */
   --jeeg-blue-dim: rgba(59, 158, 255, 0.10);
 
   /* === Superfici === */
@@ -37,7 +41,7 @@
   /* === Testo === */
   --text-primary: #F5F7FA;
   --text-secondary: #AEB7C2;
-  --text-muted: #7D8794;
+  --text-muted: #9AA4B0;  /* AA >= 4.5:1 su tutte le superfici */
   --text-inverse: #0B0E12;
 
   /* === Alias per coerenza interna === */
@@ -152,18 +156,18 @@ body {
 
 /* Link */
 a {
-  color: var(--jeeg-green);
+  color: var(--green-text);
   text-decoration: none;
   transition: color var(--transition-fast);
 }
 a:hover {
-  color: var(--accent-bright);
+  color: var(--green-text-bright);
 }
 
 /* Selezione testo — verde Jeeg */
 ::selection {
   background: var(--jeeg-green-dim);
-  color: var(--jeeg-green);
+  color: var(--green-text);
 }
 
 /* Skip to content per screen reader */
@@ -203,4 +207,15 @@ a:hover {
   color: var(--text-primary);
   font-size: var(--text-sm);
   font-style: italic;
+}
+/* ==========================================================================
+   MOVIMENTO RIDOTTO — rispetta la preferenza di sistema (WCAG 2.3.3)
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

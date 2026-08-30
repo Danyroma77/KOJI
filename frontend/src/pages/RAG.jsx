@@ -8,6 +8,8 @@ export default function RAG() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [sources, setSources] = useState([])
   const [metrics, setMetrics] = useState({ tokPerSec: '—', ttft: '—' })
+  // Fase corrente comunicata dal backend (status SSE): ricerca/generazione
+  const [stage, setStage] = useState('')
   const [activeModel, setActiveModel] = useState(null)
   // null = verifica in corso, false = KB vuota, true = almeno un documento pronto
   const [kbReady, setKbReady] = useState(null)
@@ -70,6 +72,7 @@ export default function RAG() {
     setInput('')
     setIsStreaming(true)
     setSources([])
+    setStage('')
 
     const assistantMsg = { role: 'assistant', content: '' }
     setMessages(prev => [...prev, assistantMsg])
@@ -107,6 +110,10 @@ export default function RAG() {
 
             if (event.type === 'sources') {
               setSources(event.sources)
+              setStage('')
+            } else if (event.type === 'status') {
+              // Fase corrente: ricerca nei documenti / generazione risposta
+              setStage(event.message || '')
             } else if (event.type === 'token') {
               setMessages(prev => {
                 const updated = [...prev]
@@ -147,6 +154,7 @@ export default function RAG() {
       })
     } finally {
       setIsStreaming(false)
+      setStage('')
     }
   }
 
@@ -208,6 +216,9 @@ export default function RAG() {
                       {renderInlineMarkdown(msg.content)}
                       {isStreaming && i === messages.length - 1 && (
                         <span className="rag-typing-cursor" aria-hidden="true" />
+                      )}
+                      {isStreaming && i === messages.length - 1 && stage && !msg.content && (
+                        <span className="rag-stage" role="status">{stage}…</span>
                       )}
                     </span>
                   ) : (

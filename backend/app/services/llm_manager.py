@@ -128,6 +128,17 @@ class LLMManager:
             resp.raise_for_status()
             return resp.json()
 
+    def _http_timeout(self) -> httpx.Timeout:
+        """Timeout strutturato per le chiamate a Ollama.
+
+        Il connect timeout breve (5s) fa fallire SUBITO le richieste quando
+        Ollama non è raggiungibile, invece di sospendere la richiesta a
+        tempo indeterminato: il client riceve un errore esplicito e il
+        frontend può mostrarlo invece di lasciare il cursore in attesa.
+        """
+        return httpx.Timeout(connect=5.0, read=float(self.timeout),
+                             write=30.0, pool=5.0)
+
     async def generate(
         self,
         prompt: str,
@@ -153,7 +164,7 @@ class LLMManager:
             }
         }
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self._http_timeout()) as client:
             resp = await client.post(
                 f"{self.base_url}/api/generate",
                 json=payload,
@@ -187,7 +198,7 @@ class LLMManager:
             }
         }
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self._http_timeout()) as client:
             async with client.stream(
                 "POST",
                 f"{self.base_url}/api/generate",

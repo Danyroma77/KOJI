@@ -117,7 +117,7 @@ export default function Models() {
           <div style={{
             padding: 'var(--space-md)', background: 'var(--jeeg-red-dim)',
             border: '1px solid rgba(211,47,47,0.3)', borderRadius: '4px',
-            marginBottom: 'var(--space-md)', fontSize: 'var(--text-sm)', color: 'var(--jeeg-red)',
+            marginBottom: 'var(--space-md)', fontSize: 'var(--text-sm)', color: 'var(--red-text)',
           }}>
             {actionError}
           </div>

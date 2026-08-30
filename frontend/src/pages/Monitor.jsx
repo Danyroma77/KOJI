@@ -382,19 +382,19 @@ export default function Monitor() {
           {services && (
             <>
               <div className="monitor-service-item"><span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span className={services.ollama ? '' : '❌'} style={{ color: services.ollama ? 'var(--jeeg-green)' : 'var(--jeeg-red)' }}>●</span>
+                <span className={services.ollama ? '' : '❌'} style={{ color: services.ollama ? 'var(--green-text)' : 'var(--red-text)' }}>●</span>
                 Ollama (LLM Runtime)
               </span><span className={`badge ${services.ollama ? 'badge-ok' : 'badge-error'}`}><span className="badge-dot" aria-hidden="true" />{services.ollama ? 'Online' : 'Offline'}</span></div>
               <div className="monitor-service-item"><span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span className={services.chromadb ? '' : '❌'} style={{ color: services.chromadb ? 'var(--jeeg-green)' : 'var(--jeeg-red)' }}>●</span>
+                <span className={services.chromadb ? '' : '❌'} style={{ color: services.chromadb ? 'var(--green-text)' : 'var(--red-text)' }}>●</span>
                 ChromaDB (Vector Store)
               </span><span className={`badge ${services.chromadb ? 'badge-ok' : 'badge-error'}`}><span className="badge-dot" aria-hidden="true" />{services.chromadb ? 'Online' : 'Offline'}</span></div>
               <div className="monitor-service-item"><span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span className={services.file_store ? '' : '❌'} style={{ color: services.file_store ? 'var(--jeeg-green)' : 'var(--jeeg-red)' }}>●</span>
+                <span className={services.file_store ? '' : '❌'} style={{ color: services.file_store ? 'var(--green-text)' : 'var(--red-text)' }}>●</span>
                 File Store
               </span><span className={`badge ${services.file_store ? 'badge-ok' : 'badge-error'}`}><span className="badge-dot" aria-hidden="true" />{services.file_store ? 'Online' : 'Offline'}</span></div>
               <div className="monitor-service-item"><span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ color: 'var(--jeeg-green)' }}>●</span>
+                <span style={{ color: 'var(--green-text)' }}>●</span>
                 API Layer (FastAPI)
               </span><span className="badge badge-ok"><span className="badge-dot" aria-hidden="true" />Online</span></div>
             </>

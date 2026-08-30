@@ -38,10 +38,14 @@ def create_app():
     # Import router uno per uno — se uno fallisce gli altri caricano lo stesso
     routers = [
         ("documents", "app.routers.documents"),
+        ("search", "app.routers.search"),
+        ("jobs", "app.routers.jobs"),
         ("rag", "app.routers.rag"),
         ("graph", "app.routers.graph"),
         ("wiki", "app.routers.wiki"),
         ("models", "app.routers.models_route"),
+        ("monitoring", "app.routers.monitoring"),
+        ("benchmarks", "app.routers.benchmarks"),
         ("system", "app.routers.system"),
         ("admin", "app.routers.admin"),
     ]

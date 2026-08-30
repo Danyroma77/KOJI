@@ -132,6 +132,8 @@ class RAGQuery(BaseModel):
     top_k: Optional[int] = Field(default=None, ge=1, le=20)
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
     max_tokens: Optional[int] = Field(default=None, ge=64, le=4096)
+    # Modalità di retrieval: "hybrid" (default) | "dense" | "bm25"
+    retrieval_mode: Optional[str] = None
 
 
 class RAGSource(BaseModel):
@@ -289,4 +291,149 @@ class AdminConfigUpdate(BaseModel):
     hnsw_m: Optional[int] = Field(default=None, ge=4, le=64)
     hnsw_ef_construction: Optional[int] = Field(default=None, ge=50, le=500)
     graph_confidence_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    # Grounding delle entità del grafo nel testo dei documenti
+    graph_require_grounding: Optional[bool] = None
+    graph_max_entity_chars: Optional[int] = Field(default=None, ge=10, le=200)
     metrics_interval_sec: Optional[int] = Field(default=None, ge=1, le=60)
+    # --- Retrieval / RAG ---
+    rag_top_k_dense: Optional[int] = Field(default=None, ge=1, le=50)
+    rag_top_k_keyword: Optional[int] = Field(default=None, ge=1, le=50)
+    rag_top_k_final: Optional[int] = Field(default=None, ge=1, le=20)
+    rag_rrf_k: Optional[int] = Field(default=None, ge=10, le=200)
+    rag_rerank_top_k: Optional[int] = Field(default=None, ge=1, le=100)
+    rag_rerank_enabled: Optional[bool] = None
+    rag_retrieval_mode: Optional[str] = None
+    rag_temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    rag_max_tokens: Optional[int] = Field(default=None, ge=64, le=4096)
+    # --- Upload ---
+    max_upload_size_mb: Optional[int] = Field(default=None, ge=1, le=4096)
+
+
+# === Ricerca (BE-RF-12/13/14) ===
+
+class SearchMode(str, Enum):
+    DENSE = "dense"
+    BM25 = "bm25"
+    HYBRID = "hybrid"
+
+
+class SearchQueryRequest(BaseModel):
+    """Richiesta di ricerca nella Knowledge Base."""
+    query: str = Field(min_length=1, max_length=2000)
+    mode: SearchMode = SearchMode.HYBRID
+    top_k: int = Field(default=10, ge=1, le=100)
+    top_k_dense: Optional[int] = Field(default=None, ge=1, le=100)
+    top_k_keyword: Optional[int] = Field(default=None, ge=1, le=100)
+    rrf_k: Optional[int] = Field(default=None, ge=10, le=200)
+    rerank: Optional[bool] = False
+    rerank_top_k: Optional[int] = Field(default=None, ge=1, le=100)
+
+
+class SearchResultItem(BaseModel):
+    id: str
+    text: str
+    score: float = 0.0
+    dense_score: Optional[float] = None
+    keyword_score: Optional[float] = None
+    rrf_score: Optional[float] = None
+    rerank_score: Optional[float] = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class SearchResponse(BaseModel):
+    query: str
+    mode: str
+    results: list[SearchResultItem]
+    total: int
+    latency_ms: float
+    rerank_used: bool = False
+
+
+# === Metadati documento (PATCH, BE-RF-09) ===
+
+class DocumentMetadataUpdate(BaseModel):
+    """Aggiornamento dei metadati strutturali/semantici di un documento."""
+    title: Optional[str] = None
+    author: Optional[str] = None
+    date: Optional[str] = None
+    language: Optional[str] = None
+    pages: Optional[int] = Field(default=None, ge=1)
+    topics: Optional[list[str]] = None
+    entities: Optional[list[dict]] = None
+
+
+# === Benchmark (BE-RF-22) ===
+
+class BenchmarkExperiment(str, Enum):
+    E1 = "E1"   # Confronto LLM
+    E2 = "E2"   # Quantizzazione
+    E3 = "E3"   # Originale vs normalizzato
+    E4 = "E4"   # BM25 vs Dense vs Hybrid
+    E5 = "E5"   # LLM vs RAG
+    E6 = "E6"   # KB / Wiki / Graph
+    E7 = "E7"   # Scalabilità
+
+
+class BenchmarkConfig(BaseModel):
+    """Configurazione di una run benchmark, salvata per riproducibilità."""
+    experiment: BenchmarkExperiment
+    label: Optional[str] = None
+    # Modelli LLM da valutare (E1/E2/E5). Se assente usa il modello attivo.
+    models: Optional[list[str]] = None
+    # True per usare la quantizzazione nel confronto E2 (i tag Modello la esprimono).
+    top_k: int = Field(default=10, ge=1, le=100)
+    top_k_dense: Optional[int] = Field(default=None, ge=1, le=100)
+    top_k_keyword: Optional[int] = Field(default=None, ge=1, le=100)
+    rrf_k: Optional[int] = Field(default=None, ge=10, le=200)
+    rerank: bool = False
+    temperature: float = Field(default=0.3, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=512, ge=64, le=4096)
+    # Dataset: lista inline di {question, relevant_docs: [doc_id]} oppure
+    # nome di un file JSON dentro DATA_DIR/DATASET/benchmark_dataset.json.
+    questions: Optional[list[dict]] = None
+    dataset_file: Optional[str] = None
+    # Limite di domande eseguite (predefinito: tutte).
+    limit: Optional[int] = Field(default=None, ge=1, le=1000)
+
+
+class BenchmarkRunStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class BenchmarkRunSummary(BaseModel):
+    run_id: str
+    experiment: str
+    label: Optional[str]
+    status: BenchmarkRunStatus
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    error: Optional[str] = None
+    duration_s: Optional[float] = None
+    # Breve riepilogo dei risultati (aggregati, se completata).
+    summary: Optional[dict] = None
+
+
+class BenchmarkStartResponse(BaseModel):
+    run_id: str
+    experiment: str
+    status: str
+    message: str
+
+
+# === Job (BE-RF-10) ===
+
+class JobDetail(BaseModel):
+    id: str
+    type: str
+    status: str
+    created_at: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    duration_s: Optional[float] = None
+    error: Optional[str] = None
+    progress: float = 0.0
+    result: Optional[dict] = None
+    payload: Optional[dict] = None

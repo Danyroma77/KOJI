@@ -143,8 +143,6 @@ export default function Home() {
 
   return (
     <div className="animate-fade-in">
-      <a href="#main-content" className="skip-link">Vai al contenuto principale</a>
-
       {/* Benvenuto */}
       <section className="home-welcome" aria-label="Benvenuto">
         <h1>
