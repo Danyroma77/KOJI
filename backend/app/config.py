@@ -18,11 +18,24 @@ class Settings(BaseSettings):
     # --- Chunking ---
     CHUNK_SIZE: int = Field(default=512, ge=64, le=2048)
     CHUNK_OVERLAP_PCT: int = Field(default=20, ge=0, le=50)
+    # Strategia di segmentazione (selezionabile da Admin, letta a ogni
+    # elaborazione):
+    #   paragraph — confeziona paragrafi fino alla dimensione target (default)
+    #   section   — un chunk per sezione Markdown (titoli H1-H6); le sezioni
+    #               oversize vengono rip'zzate ai confini di paragrafo/frase
+    #   sentence  — confeziona frasi complete fino alla dimensione target
+    #   fixed     — finestra rigida di caratteri con overlap (nessun confine
+    #               semantico)
+    CHUNK_STRATEGY: str = Field(default="paragraph")
 
     # --- Embedding ---
     EMBEDDING_MODEL: str = Field(default="all-MiniLM-L6-v2")
     EMBEDDING_BATCH_SIZE: int = Field(default=32, ge=1, le=128)
     EMBEDDING_DIMENSION: int = Field(default=384)
+    # Timeout (secondi) della generazione dell'embedding di una query:
+    # oltre questo limite la ricerca/RAG fallisce con un errore esplicito
+    # invece di lasciare il client in attesa indefinita
+    EMBEDDING_TIMEOUT: int = Field(default=30, ge=1, le=600)
 
     # --- Vector Store ---
     HNSW_M: int = Field(default=16, ge=4, le=64)
@@ -83,6 +96,22 @@ class Settings(BaseSettings):
                     pass
             return [m.strip() for m in text.split(",") if m.strip()]
         return value
+
+    @field_validator("CHUNK_STRATEGY", mode="before")
+    @classmethod
+    def parse_chunk_strategy(cls, value):
+        """Normalizza la strategia di chunking (alias italiani ammessi)."""
+        if not isinstance(value, str) or not value.strip():
+            return "paragraph"
+        aliases = {
+            "paragraph": "paragraph", "paragrafo": "paragraph", "paragrafi": "paragraph",
+            "section": "section", "sezione": "section", "sezioni": "section",
+            "heading": "section", "markdown": "section",
+            "sentence": "sentence", "frase": "sentence", "frasi": "sentence",
+            "fixed": "fixed", "fisso": "fixed", "finestra": "fixed",
+            "window": "fixed", "raw": "fixed",
+        }
+        return aliases.get(value.strip().lower(), "paragraph")
 
     @field_validator("RAG_RETRIEVAL_MODE", mode="before")
     @classmethod

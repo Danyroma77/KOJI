@@ -15,6 +15,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 async def get_config():
     """Restituisce la configurazione attuale (esclusi segreti)."""
     return {
+        "chunk_strategy": settings.CHUNK_STRATEGY,
         "chunk_size": settings.CHUNK_SIZE,
         "chunk_overlap_pct": settings.CHUNK_OVERLAP_PCT,
         "embedding_model": settings.EMBEDDING_MODEL,
@@ -43,10 +44,13 @@ async def get_config():
 async def update_config(update: AdminConfigUpdate):
     """Aggiorna i parametri di configurazione.
 
-    Nota: le modifiche sono effettive per le nuove operazioni.
-    I parametri già in uso da singoliton (es. chunk_manager)
-    non vengono ricreati — riavviare il container per applicare tutti i cambiamenti.
+    Nota: i parametri di chunking (strategia, dimensione, overlap) sono
+    letti a ogni elaborazione — l'effetto è immediato per i NUOVI documenti.
+    I chunk già indicizzati non vengono ricreati: ri-processare i documenti
+    per rigenerarli con la nuova configurazione.
     """
+    if update.chunk_strategy is not None:
+        settings.CHUNK_STRATEGY = settings.parse_chunk_strategy(update.chunk_strategy)
     if update.chunk_size is not None:
         settings.CHUNK_SIZE = update.chunk_size
     if update.chunk_overlap_pct is not None:

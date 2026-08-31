@@ -7,14 +7,28 @@ export default function RAG() {
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [sources, setSources] = useState([])
-  const [metrics, setMetrics] = useState({ tokPerSec: '—', ttft: '—' })
+  // Metriche live durante lo streaming (stimate dal client) e confermate
+  // dal backend a fine risposta con i valori autorevoli
+  const [metrics, setMetrics] = useState({
+    tokPerSec: '—', ttft: '—', tokens: '—', retrieval: '—', live: false,
+  })
+  // Annuncio per screen reader a fine generazione (regione live)
+  const [announce, setAnnounce] = useState('')
   // Fase corrente comunicata dal backend (status SSE): ricerca/generazione
   const [stage, setStage] = useState('')
   const [activeModel, setActiveModel] = useState(null)
   // null = verifica in corso, false = KB vuota, true = almeno un documento pronto
   const [kbReady, setKbReady] = useState(null)
   const messagesEndRef = useRef(null)
+  // Contatori per le metriche live: aggiornati ad ogni token senza re-render
+  const tokenCountRef = useRef(0)
+  const firstTokenAtRef = useRef(0)
+  const genStartRef = useRef(0)
+  const metricsTimerRef = useRef(null)
   const navigate = useNavigate()
+
+  // Pulizia del timer delle metriche live allo smontaggio
+  useEffect(() => () => clearInterval(metricsTimerRef.current), [])
 
   // Modello attivo (sola lettura): la scelta avviene nella pagina Modelli.
   // Polling leggero per riflettere eventuali cambi fatti altrove.
@@ -73,6 +87,28 @@ export default function RAG() {
     setIsStreaming(true)
     setSources([])
     setStage('')
+    setAnnounce('')
+
+    // Reset metriche: i contatori ripartono per la nuova domanda. Il timer
+    // aggiorna tok/s, token e TTFT stimati ogni 500 ms durante lo streaming.
+    tokenCountRef.current = 0
+    firstTokenAtRef.current = 0
+    genStartRef.current = 0
+    setMetrics({ tokPerSec: '—', ttft: '—', tokens: '—', retrieval: '—', live: false })
+    clearInterval(metricsTimerRef.current)
+    metricsTimerRef.current = setInterval(() => {
+      const first = firstTokenAtRef.current
+      if (!first) return
+      const elapsed = (performance.now() - first) / 1000
+      if (elapsed < 0.2) return
+      setMetrics(m => ({
+        ...m,
+        tokPerSec: (tokenCountRef.current / elapsed).toFixed(1),
+        tokens: String(tokenCountRef.current),
+        ttft: `${((first - genStartRef.current) / 1000).toFixed(2)} s`,
+        live: true,
+      }))
+    }, 500)
 
     const assistantMsg = { role: 'assistant', content: '' }
     setMessages(prev => [...prev, assistantMsg])
@@ -114,7 +150,20 @@ export default function RAG() {
             } else if (event.type === 'status') {
               // Fase corrente: ricerca nei documenti / generazione risposta
               setStage(event.message || '')
+              // Inizio generazione: riferimento temporale per il TTFT live
+              if (event.stage === 'generation') genStartRef.current = performance.now()
+              // Latenza di ricerca inviata dal backend prima del primo token
+              if (event.retrieval_time_ms != null) {
+                setMetrics(m => ({ ...m, retrieval: `${Math.round(event.retrieval_time_ms)} ms` }))
+              }
             } else if (event.type === 'token') {
+              tokenCountRef.current += 1
+              if (!firstTokenAtRef.current) {
+                firstTokenAtRef.current = performance.now()
+                // Fallback: se lo status di generazione non è arrivato,
+                // il TTFT parte dal primo token (stima conservativa)
+                if (!genStartRef.current) genStartRef.current = firstTokenAtRef.current
+              }
               setMessages(prev => {
                 const updated = [...prev]
                 updated[updated.length - 1] = {
@@ -124,11 +173,24 @@ export default function RAG() {
                 return updated
               })
             } else if (event.type === 'metrics') {
-              setMetrics({
+              // Metriche autorevoli del backend: sostituiscono le stime live
+              clearInterval(metricsTimerRef.current)
+              setMetrics(m => ({
+                ...m,
                 tokPerSec: String(event.tok_per_sec),
-                ttft: String(event.ttft),
-              })
+                ttft: `${event.ttft} s`,
+                tokens: String(event.tokens ?? tokenCountRef.current),
+                retrieval: event.retrieval_time_ms != null
+                  ? `${Math.round(event.retrieval_time_ms)} ms`
+                  : m.retrieval,
+                live: false,
+              }))
+              setAnnounce(`Risposta completata: ${tokenCountRef.current} token, `
+                + `${event.tok_per_sec} token al secondo, `
+                + `primo token dopo ${event.ttft} secondi.`)
             } else if (event.type === 'error') {
+              clearInterval(metricsTimerRef.current)
+              setAnnounce('Errore durante la generazione della risposta.')
               setMessages(prev => {
                 const updated = [...prev]
                 updated[updated.length - 1] = {
@@ -155,6 +217,8 @@ export default function RAG() {
     } finally {
       setIsStreaming(false)
       setStage('')
+      clearInterval(metricsTimerRef.current)
+      setMetrics(m => ({ ...m, live: false }))
     }
   }
 
@@ -167,6 +231,8 @@ export default function RAG() {
 
   return (
     <div className="animate-fade-in" aria-label="Interrogazione RAG">
+      {/* Annuncio per screen reader a fine generazione (regione live) */}
+      <span className="sr-only" role="status">{announce}</span>
       <div className="rag-header">
         <p className="rag-epistemology" role="note">
           Ogni risposta è costruita dalle evidenze disponibili
@@ -277,8 +343,16 @@ export default function RAG() {
             )}
           </div>
           <div className="rag-sources-footer">
-            <span>{metrics.tokPerSec} tok/s</span>
-            <span>TTFT {metrics.ttft}</span>
+            <span className="rag-metric">Ricerca <strong>{metrics.retrieval}</strong></span>
+            <span className="rag-metric"><strong>{metrics.tokPerSec}</strong> tok/s</span>
+            <span className="rag-metric">TTFT <strong>{metrics.ttft}</strong></span>
+            <span className="rag-metric"><strong>{metrics.tokens}</strong> token</span>
+            {metrics.live && (
+              <span className="rag-metric-live">
+                <span className="rag-metric-live-dot" aria-hidden="true" />
+                live
+              </span>
+            )}
           </div>
         </aside>
       </div>

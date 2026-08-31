@@ -285,6 +285,8 @@ class ServiceStatusResponse(BaseModel):
 # === Admin ===
 
 class AdminConfigUpdate(BaseModel):
+    # Strategia di segmentazione: paragraph | section | sentence | fixed
+    chunk_strategy: Optional[str] = None
     chunk_size: Optional[int] = Field(default=None, ge=64, le=2048)
     chunk_overlap_pct: Optional[int] = Field(default=None, ge=0, le=50)
     embedding_model: Optional[str] = None

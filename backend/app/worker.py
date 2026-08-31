@@ -187,11 +187,12 @@ def process_document_job(job):
         activity_log.log(ActivityAction.ERROR, filename, doc_id, detail=indexing_error[:80])
         # NON raise: i job downstream vengono comunque accodati qui sotto
 
-    # ==== FASE 3 — Artefatti derivati: grafo e wiki come JOB INDIPENDENTI ====
-    # La generazione di wiki e grafo dipende SOLO dal testo normalizzato,
-    # non dall'esito dell'indicizzazione: se il testo esiste vengono accodati
-    # come job separati, così un fallimento di uno non blocca l'altro né
-    # incide sullo stato di indicizzazione del documento.
+    # ==== FASE 3 — Artefatti derivati: WIKI PRIMA, GRAFO DOPO ====
+    # Dopo l'indicizzazione viene accodata SOLO la wiki. Il grafo del
+    # documento parte solo al COMPLETAMENTO della wiki (catena gestita in
+    # generate_wiki_job): la sequenza è deterministicamente wiki → grafo,
+    # mai in parallelo. Se la wiki fallisce il grafo non parte (requisito
+    # pipeline: carica → chunk → wiki → grafo).
     downstream = 0
     if processed_path.exists():
         # Ripulisce residui pendenti di tentativi precedenti (es. dopo un
@@ -199,13 +200,16 @@ def process_document_job(job):
         job_queue.cancel_pending_for_doc(
             doc_id, reason="Annullato: sostituito dal nuovo processing del documento"
         )
-        job_queue.enqueue("generate_graph", {"doc_id": doc_id, "filename": filename})
-        job_queue.enqueue("generate_wiki", {"doc_id": doc_id, "filename": filename})
-        downstream = 2
-        logger.info("[%s] Accodati grafo e wiki per %s", job.id, filename)
+        job_queue.enqueue("generate_wiki", {
+            "doc_id": doc_id,
+            "filename": filename,
+            "chain_graph": True,   # il grafo verrà accodato dopo la wiki
+        })
+        downstream = 1
+        logger.info("[%s] Accodata wiki per %s (il grafo partirà al completamento)", job.id, filename)
 
     if indexing_error:
-        # Il job fallisce per tracciabilità, ma grafo/wiki sono già in coda
+        # Il job fallisce per tracciabilità, ma la wiki è già in coda
         raise RuntimeError(indexing_error)
 
     return {"chunks": chunks_count, "filename": filename, "downstream_jobs": downstream}
@@ -298,7 +302,10 @@ def generate_wiki_job(job):
     """Rigenera la wiki dalla KB (globale), includendo il documento richiesto.
 
     La wiki è un artefatto aggregato: viene ricostruita da tutti i documenti
-    pronti. Operazione autonoma — un errore non incide su grafo né indicizzazione.
+    pronti. Se il job arriva dalla pipeline di caricamento (payload
+    chain_graph=True) al SUCCESSO accoda il grafo del documento trigger:
+    sequenza wiki → grafo. Su errore il grafo NON parte; i job manuali
+    (rebuild wiki/grafo) restano indipendenti e non attivano la catena.
     """
     from app.config import settings
     from app.services.wiki_generator import wiki_generator
@@ -346,7 +353,25 @@ def generate_wiki_job(job):
             detail=f"{len(docs_for_wiki)} documenti",
         )
         logger.info("[%s] WIKI COMPLETATA: %d documenti", job.id, len(docs_for_wiki))
-        return {"documents": len(docs_for_wiki), "filename": filename}
+
+        # Catena wiki → grafo: il grafo del documento trigger viene accodato
+        # SOLO dopo il successo della wiki (pipeline: chunk → wiki → grafo).
+        # Se la wiki fallisce l'eccezione qui sotto fa terminare il job e il
+        # grafo non parte mai. I job manuali non hanno chain_graph.
+        graph_job_id = None
+        if job.payload.get("chain_graph") and doc_id:
+            graph_job = job_queue.enqueue("generate_graph", {
+                "doc_id": doc_id,
+                "filename": filename,
+                "after_wiki": True,
+            })
+            graph_job_id = graph_job.id
+            logger.info(
+                "[%s] Wiki completata — accodato grafo %s per %s",
+                job.id, graph_job.id, filename,
+            )
+
+        return {"documents": len(docs_for_wiki), "filename": filename, "graph_job_id": graph_job_id}
 
     except Exception as e:
         logger.error("[%s] FALLITO (wiki): %s — %s", job.id, filename, e)

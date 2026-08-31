@@ -87,7 +87,10 @@ def _reset_indexing_artifacts(doc_id: str):
 async def _process_document(doc_id: str, filename: str, file_bytes: bytes, catalog: dict):
     """Pipeline completa di processing per un singolo documento.
 
-    Flusso: Parse → Normalize → Chunk → Embed → Index → (Graph → Wiki)
+    Flusso: Parse → Normalize → Chunk → Embed → Index → (Wiki → Graph).
+    Nota: questo percorso è mantenuto per compatibilità/test; il percorso
+    reale di caricamento usa il worker (process_document job) che accoda la
+    wiki e, al suo completamento, il grafo (sequenza wiki → grafo).
     """
     def _update_status(status: DocumentStatus, error: str = None):
         for doc in catalog["documents"]:

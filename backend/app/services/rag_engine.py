@@ -325,7 +325,9 @@ class RAGEngine:
 
         yield {"type": "sources", "sources": sources}
         yield {"type": "status", "stage": "generation",
-               "message": "Generazione della risposta..."}
+               "message": "Generazione della risposta...",
+               # Latenza di ricerca subito disponibile per il pannello metriche
+               "retrieval_time_ms": round((t_retrieval_done - t_start) * 1000, 1)}
 
         # Assemblaggio prompt
         context_parts = []
@@ -362,6 +364,7 @@ class RAGEngine:
             "type": "metrics",
             "tok_per_sec": round(tok_per_sec, 1),
             "ttft": round(ttft if not first_token else 0, 2),
+            "tokens": token_count,
             # Tempo effettivo di embedding+retrieval+reranking, misurato PRIMA della generazione
             "retrieval_time_ms": round((t_retrieval_done - t_start) * 1000, 1),
         }

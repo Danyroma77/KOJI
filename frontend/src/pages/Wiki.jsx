@@ -1,12 +1,13 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ChevronRight, Search, BookOpen } from 'lucide-react'
+import { ChevronRight, Search, BookOpen, FileText, X, Loader2 } from 'lucide-react'
 
 export default function Wiki() {
   const [index, setIndex] = useState({ groups: [] })
   const [activePage, setActivePage] = useState(null)
   const [pageContent, setPageContent] = useState(null)
+  const [pageLoading, setPageLoading] = useState(false)
   const [openGroups, setOpenGroups] = useState({})
   const [searchTerm, setSearchTerm] = useState('')
   const [loading, setLoading] = useState(true)
@@ -39,13 +40,15 @@ export default function Wiki() {
       return
     }
     async function loadPage() {
+      setPageLoading(true)
       try {
         const res = await fetch(`/api/wiki/page/${activePage}`)
         if (!res.ok) throw new Error()
-        const data = await res.json()
-        setPageContent(data)
+        setPageContent(await res.json())
       } catch {
         setPageContent(null)
+      } finally {
+        setPageLoading(false)
       }
     }
     loadPage()
@@ -55,17 +58,29 @@ export default function Wiki() {
     setOpenGroups(prev => ({ ...prev, [idx]: !prev[idx] }))
   }
 
-  // Filtro ricerca sull'indice
-  const filteredIndex = searchTerm.trim()
-    ? {
-        groups: index.groups.map(g => ({
+  // Filtro ricerca sull'indice (uso useMemo: l'oggetto va ricomputato solo
+  // al cambio di indice/termine e il check "vuoto" e' su .groups, non .length)
+  const filteredIndex = useMemo(() => {
+    if (!searchTerm.trim()) return index
+    const term = searchTerm.toLowerCase()
+    return {
+      groups: (index.groups || [])
+        .map(g => ({
           ...g,
-          items: g.items.filter(item =>
-            item.label.toLowerCase().includes(searchTerm.toLowerCase())
-          ),
-        })).filter(g => g.items.length > 0),
-      }
-    : index.groups
+          items: (g.items || []).filter(item => item.label.toLowerCase().includes(term)),
+        }))
+        .filter(g => g.items.length > 0),
+    }
+  }, [index, searchTerm])
+
+  const totalPages = useMemo(
+    () => (index.groups || []).reduce((n, g) => n + (g.items?.length || 0), 0),
+    [index]
+  )
+  const searchResults = useMemo(
+    () => (filteredIndex.groups || []).reduce((n, g) => n + g.items.length, 0),
+    [filteredIndex]
+  )
 
   return (
     <div className="animate-fade-in" aria-label="Wiki semantica">
@@ -74,65 +89,84 @@ export default function Wiki() {
           <h2>Wiki semantica</h2>
           <p className="motto">La conoscenza diventa navigabile</p>
         </div>
-        <div style={{ position: 'relative' }}>
-          <Search size={14} style={{
-            position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)',
-            color: 'var(--text-muted)'
-          }} />
-          <input
-            type="text"
-            className="wiki-search"
-            placeholder="Cerca nella wiki..."
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            style={{ paddingLeft: '34px' }}
-            aria-label="Cerca nella wiki"
-          />
+        <div className="wiki-header-tools">
+          {totalPages > 0 && (
+            <span className="wiki-count">{totalPages} pagine</span>
+          )}
+          <div className="wiki-search-wrap">
+            <Search size={14} aria-hidden="true" className="wiki-search-icon" />
+            <input
+              type="text"
+              className="wiki-search"
+              placeholder="Cerca una pagina…"
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              aria-label="Cerca una pagina nella wiki"
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                className="wiki-search-clear"
+                onClick={() => setSearchTerm('')}
+                aria-label="Cancella la ricerca"
+              >
+                <X size={13} aria-hidden="true" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       <div className="wiki-layout">
         {/* Indice */}
         <nav className="wiki-index" aria-label="Indice della wiki">
-          <h3>Indice</h3>
+          <div className="wiki-index-head">
+            <h3>Indice</h3>
+            {searchTerm && (
+              <span className="wiki-index-results" role="status">
+                {searchResults} risultati
+              </span>
+            )}
+          </div>
           {loading ? (
-            <p style={{ color: 'var(--text-muted)', fontSize: 'var(--text-sm)' }}>Caricamento...</p>
-          ) : filteredIndex.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '2rem 0' }}>
-              <BookOpen size={28} style={{ display: 'block', margin: '0 auto 0.8rem', opacity: 0.25 }} />
-              <p style={{ color: 'var(--text-muted)', fontSize: 'var(--text-sm)', lineHeight: 1.5 }}>
+            <div className="wiki-empty" role="status">
+              <Loader2 size={22} aria-hidden="true" className="wiki-spinner" />
+              <p>Caricamento indice…</p>
+            </div>
+          ) : filteredIndex.groups.length === 0 ? (
+            <div className="wiki-empty">
+              <BookOpen size={28} aria-hidden="true" />
+              <p>
                 {searchTerm
-                  ? 'Nessun risultato per questa ricerca'
-                  : 'La wiki verrà generata automaticamente al caricamento dei documenti.'}
+                  ? <>Nessun risultato per «{searchTerm}»</>
+                  : 'La wiki viene generata automaticamente al caricamento dei documenti.'}
               </p>
             </div>
           ) : (
-            filteredIndex.map((group, gi) => (
+            filteredIndex.groups.map((group, gi) => (
               <div key={gi} className="wiki-index-group">
                 <button
+                  type="button"
                   className={`wiki-index-group-title ${openGroups[gi] ? 'open' : ''}`}
                   onClick={() => toggleGroup(gi)}
                   aria-expanded={openGroups[gi]}
                 >
                   <ChevronRight size={14} aria-hidden="true" />
                   {group.title}
-                  <span style={{ marginLeft: 'auto', fontSize: 'var(--text-xs)', color: 'var(--text-muted)', fontWeight: 400 }}>
-                    {group.items.length}
-                  </span>
+                  <span className="wiki-index-group-count">{group.items.length}</span>
                 </button>
                 {openGroups[gi] && (
-                  <div className="wiki-index-items" role="list">
+                  <div className="wiki-index-items">
                     {group.items.map(item => (
-                      <a
+                      <button
                         key={item.id}
+                        type="button"
                         className={`wiki-index-item ${activePage === item.id ? 'active' : ''}`}
                         onClick={() => setActivePage(item.id)}
-                        role="listitem"
-                        tabIndex={0}
                         aria-current={activePage === item.id ? 'page' : undefined}
                       >
                         {item.label}
-                      </a>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -142,28 +176,51 @@ export default function Wiki() {
         </nav>
 
         {/* Contenuto */}
-        <article className="wiki-content" aria-label="Pagina wiki">
+        <article
+          className="wiki-content"
+          aria-label="Pagina wiki"
+          aria-busy={pageLoading}
+        >
           {!activePage ? (
-            <div style={{ textAlign: 'center', padding: '4rem 1rem', color: 'var(--text-muted)' }}>
-              <BookOpen size={40} style={{ display: 'block', margin: '0 auto 1rem', opacity: 0.2 }} />
-              <p style={{ fontSize: 'var(--text-lg)', marginBottom: '0.5rem' }}>Seleziona una voce dall'indice</p>
-              <p style={{ fontSize: 'var(--text-sm)' }}>oppure carica documenti per generare automaticamente la wiki.</p>
+            <div className="wiki-empty wiki-empty-lg">
+              <BookOpen size={40} aria-hidden="true" />
+              <p className="wiki-empty-title">Seleziona una voce dall'indice</p>
+              <p className="wiki-empty-sub">
+                oppure carica documenti per generare automaticamente la wiki.
+              </p>
+            </div>
+          ) : pageLoading ? (
+            <div className="wiki-empty" role="status">
+              <Loader2 size={22} aria-hidden="true" className="wiki-spinner" />
+              <p>Caricamento pagina…</p>
             </div>
           ) : !pageContent ? (
-            <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-              Caricamento...
+            <div className="wiki-empty" role="alert">
+              <BookOpen size={28} aria-hidden="true" />
+              <p>Impossibile caricare la pagina. Riprova.</p>
             </div>
           ) : (
             <>
-              <h1>{pageContent.title}</h1>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {pageContent.content}
-              </ReactMarkdown>
+              <header className="wiki-page-head">
+                <h1>{pageContent.title}</h1>
+              </header>
+              <div className="wiki-md">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {pageContent.content}
+                </ReactMarkdown>
+              </div>
               {pageContent.sources && pageContent.sources.length > 0 && (
-                <div className="wiki-sources">
-                  <strong>Fonti:</strong>{' '}
-                  {pageContent.sources.join(' · ')}
-                </div>
+                <footer className="wiki-sources" aria-label="Fonti della pagina">
+                  <span className="wiki-sources-label">Fonti</span>
+                  <ul className="wiki-sources-list">
+                    {pageContent.sources.map((s, i) => (
+                      <li key={i} className="wiki-source-item">
+                        <FileText size={13} aria-hidden="true" />
+                        <span>{s}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </footer>
               )}
             </>
           )}

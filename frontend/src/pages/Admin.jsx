@@ -1,6 +1,12 @@
 import { useState, useEffect } from 'react'
 
 const FIELDS = [
+  { key: 'chunk_strategy', label: 'Strategia di chunking', type: 'select', desc: 'Come suddividere i documenti in chunk. Paragrafi (default), Sezioni per titoli Markdown, Frasi complete o Finestra fissa di caratteri. Applicata ai nuovi processamenti: ri-processa i documenti per rigenerare i chunk esistenti.', options: [
+    { value: 'paragraph', label: 'Paragrafi confezionati (default)' },
+    { value: 'section', label: 'Sezioni Markdown (titoli H1-H6)' },
+    { value: 'sentence', label: 'Frasi complete con overlap' },
+    { value: 'fixed', label: 'Finestra fissa (caratteri)' },
+  ] },
   { key: 'chunk_size', label: 'Dimensione chunk (token)', desc: 'Numero di token per ciascun segmento. Default: 512', min: 64, max: 2048, step: 64, type: 'number' },
   { key: 'chunk_overlap_pct', label: 'Overlap chunk (%)', desc: 'Percentuale di sovrapposizione tra chunk. Default: 20', min: 0, max: 50, step: 5, type: 'number' },
   { key: 'embedding_model', label: 'Modello di embedding', desc: 'Modello sentence-transformer. Richiede rebuild della KB.', type: 'text' },
@@ -14,7 +20,7 @@ const FIELDS = [
 // indici che non corrispondevano ai titoli: embedding finiva sotto HNSW e
 // ef_construction sotto Knowledge Graph).
 const SECTIONS = [
-  { title: 'Elaborazione documenti', fields: ['chunk_size', 'chunk_overlap_pct'] },
+  { title: 'Elaborazione documenti', fields: ['chunk_strategy', 'chunk_size', 'chunk_overlap_pct'] },
   { title: 'Modello di embedding', fields: ['embedding_model'] },
   { title: 'Indice vettoriale (HNSW)', fields: ['hnsw_m', 'hnsw_ef_construction'] },
   { title: 'Knowledge Graph', fields: ['graph_confidence_threshold'] },
@@ -91,9 +97,19 @@ export default function Admin() {
               <div key={f.key} className="admin-field">
                 <label className="admin-field-label" htmlFor={f.key}>{f.label}</label>
                 <p className="admin-field-desc">{f.desc}</p>
-                <input id={f.key} type={f.type} className="admin-input"
-                  value={config[f.key] ?? ''} onChange={e => handleChange(f.key, e.target.value)}
-                  min={f.min} max={f.max} step={f.step} />
+                {f.type === 'select' ? (
+                  <select id={f.key} className="admin-input"
+                    value={config[f.key] ?? 'paragraph'}
+                    onChange={e => handleChange(f.key, e.target.value)}>
+                    {f.options.map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input id={f.key} type={f.type} className="admin-input"
+                    value={config[f.key] ?? ''} onChange={e => handleChange(f.key, e.target.value)}
+                    min={f.min} max={f.max} step={f.step} />
+                )}
               </div>
             )
           })}
