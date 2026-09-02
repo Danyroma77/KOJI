@@ -168,6 +168,7 @@ def process_document_job(job):
         for doc in catalog["documents"]:
             if doc["id"] == doc_id:
                 doc["chunks_count"] = len(chunks)
+                doc["chunk_strategy"] = settings.CHUNK_STRATEGY
                 doc["status"] = DocumentStatus.READY.value
                 doc["error_message"] = None
                 doc["updated_at"] = datetime.now().isoformat()
@@ -338,7 +339,7 @@ def generate_wiki_job(job):
 
     try:
         logger.info("[%s] Wiki: rigenerazione da %d documenti", job.id, len(docs_for_wiki))
-        wiki_generator.generate_all(docs_for_wiki)
+        wiki_generator.generate_all_sync(docs_for_wiki)
 
         # Aggiorna il timestamp wiki su tutti i documenti pronti
         # (la ricostruzione è globale, non solo per il documento trigger)

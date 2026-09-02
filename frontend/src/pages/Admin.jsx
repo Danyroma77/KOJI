@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
 
 const FIELDS = [
-  { key: 'chunk_strategy', label: 'Strategia di chunking', type: 'select', desc: 'Come suddividere i documenti in chunk. Paragrafi (default), Sezioni per titoli Markdown, Frasi complete o Finestra fissa di caratteri. Applicata ai nuovi processamenti: ri-processa i documenti per rigenerare i chunk esistenti.', options: [
+  { key: 'chunk_strategy', label: 'Strategia di chunking', type: 'select', desc: 'Come suddividere i documenti in chunk. Paragrafi (default), Sezioni per titoli Markdown, Frasi complete, Finestra fissa di caratteri o Pagina del documento originale (solo PDF). Applicata ai nuovi processamenti: ri-processa i documenti per rigenerare i chunk esistenti.', options: [
     { value: 'paragraph', label: 'Paragrafi confezionati (default)' },
     { value: 'section', label: 'Sezioni Markdown (titoli H1-H6)' },
     { value: 'sentence', label: 'Frasi complete con overlap' },
     { value: 'fixed', label: 'Finestra fissa (caratteri)' },
+    { value: 'page', label: 'Pagina documento (solo PDF)' },
   ] },
   { key: 'chunk_size', label: 'Dimensione chunk (token)', desc: 'Numero di token per ciascun segmento. Default: 512', min: 64, max: 2048, step: 64, type: 'number' },
   { key: 'chunk_overlap_pct', label: 'Overlap chunk (%)', desc: 'Percentuale di sovrapposizione tra chunk. Default: 20', min: 0, max: 50, step: 5, type: 'number' },

@@ -55,6 +55,10 @@ class BaseParser(ABC):
 class PDFParser(BaseParser):
     """Parser per documenti PDF (testuali e scansionati con fallback OCR)."""
 
+    # Separatore di pagina usato per preservare i confini di pagina
+    # nel testo estratto. Il chunk manager può usarlo per la strategia "page".
+    PAGE_BREAK = "\f"
+
     def parse(self, file_bytes: bytes, filename: str) -> ParseResult:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
         pages_text = []
@@ -68,7 +72,9 @@ class PDFParser(BaseParser):
                 text = self._ocr_fallback(page)
                 pages_text.append(text)
 
-        full_text = "\n\n".join(pages_text)
+        # Unisce le pagine con un separatore speciale per preservare
+        # i confini di pagina (usato dalla strategia di chunking "page")
+        full_text = self.PAGE_BREAK.join(pages_text)
 
         # Metadati dai metadati PDF
         meta = doc.metadata

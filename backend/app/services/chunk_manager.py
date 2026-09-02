@@ -62,6 +62,7 @@ class ChunkManager:
         "sentence": "sentence", "frase": "sentence", "frasi": "sentence",
         "fixed": "fixed", "fisso": "fixed", "finestra": "fixed",
         "window": "fixed", "raw": "fixed",
+        "page": "page", "pagina": "page", "pagine": "page",
     }
 
     @classmethod
@@ -75,7 +76,7 @@ class ChunkManager:
         """Segmenta il testo in chunk secondo la strategia configurata.
 
         La strategia (settings.CHUNK_STRATEGY) è letta a ogni chiamata:
-        "paragraph" (default), "section", "sentence" o "fixed".
+        "paragraph" (default), "section", "sentence", "fixed" o "page".
 
         Args:
             text: Testo normalizzato in Markdown.
@@ -95,6 +96,8 @@ class ChunkManager:
             chunks = self._chunk_by_sections(text, doc_id)
         elif strategy == "sentence":
             chunks = self._chunk_by_sentences(text, doc_id)
+        elif strategy == "page":
+            chunks = self._chunk_by_pages(text, doc_id)
         else:
             paragraphs = self._split_paragraphs(text)
             chunks = (
@@ -107,6 +110,7 @@ class ChunkManager:
         for i, chunk in enumerate(chunks):
             chunk.index = i
             chunk.metadata["strategy"] = strategy
+            chunk.metadata["total_chunks"] = len(chunks)
 
         return chunks
 
@@ -243,6 +247,54 @@ class ChunkManager:
                 chunks.append(self._make_chunk(section, doc_id))
             else:
                 chunks.extend(self._pack_blocks(section, doc_id))
+        return chunks
+
+    def _chunk_by_pages(self, text: str, doc_id: str) -> list[Chunk]:
+        """Strategia "page": un chunk per pagina del documento originale.
+
+        Il parser PDF inserisce un separatore \\f (form feed) tra i testi di
+        pagine diverse. Qui suddividiamo su quel separatore: ogni chunk
+        corrisponde esattamente a una pagina del documento originale.
+
+        Pagine vuote vengono scartate. Pagine più grandi di chunk_size token
+        vengono suddivise in sotto-chunk rispettando i confini di paragrafo.
+        """
+        PAGE_BREAK = "\f"
+        pages = text.split(PAGE_BREAK)
+
+        chunks = []
+        global_offset = 0
+
+        for page_num, page_text in enumerate(pages, start=1):
+            page_text = page_text.strip()
+            if not page_text:
+                continue
+
+            page_start = global_offset
+            page_end = global_offset + len(page_text)
+            global_offset = page_end + 1  # +1 per il separatore
+
+            page_tokens = len(page_text) // 4
+
+            if page_tokens <= self.chunk_size:
+                # La pagina entra in un singolo chunk
+                chunks.append(Chunk(
+                    text=page_text,
+                    index=0,
+                    start_char=page_start,
+                    end_char=page_end,
+                    doc_id=doc_id,
+                    metadata={"page": page_num},
+                ))
+            else:
+                # Pagina oversize: suddividi in sotto-chunk per paragrafi
+                sub_chunks = self._split_paragraphs(page_text)
+                if sub_chunks:
+                    packed = self._chunk_with_boundaries(sub_chunks, doc_id)
+                    for chunk in packed:
+                        chunk.metadata["page"] = page_num
+                        chunks.append(chunk)
+
         return chunks
 
     @staticmethod

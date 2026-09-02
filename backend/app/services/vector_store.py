@@ -5,6 +5,9 @@ Implementa Hybrid Retrieval con fusione RRF.
 
 from __future__ import annotations
 import json
+import time
+import threading
+import logging
 from typing import Optional
 from pathlib import Path
 
@@ -13,6 +16,8 @@ from rank_bm25 import BM25Okapi
 
 from app.config import settings
 from app.services.embedding_service import embedding_service
+
+logger = logging.getLogger("koji")
 
 
 class VectorStore:
@@ -24,6 +29,13 @@ class VectorStore:
         self._bm25_index = None
         self._bm25_docs: list[dict] = []  # {id, text}
         self._initialized = False
+        self._lock = threading.Lock()
+        self._last_refresh = 0.0
+        # Intervallo (s) dopo il quale lo stato persistito di ChromaDB viene
+        # riletto dal disco. API e worker sono processi separati sulla stessa
+        # directory persistente: il refresh rende visibili all'API le scritture
+        # fatte dal worker senza richiedere riavvii (vedi _maybe_refresh).
+        self.REFRESH_INTERVAL = 5.0
 
     def initialize(self):
         """Inizializza ChromaDB e carica lo stato persistente."""
@@ -46,6 +58,64 @@ class VectorStore:
         # Ricostruisci indice BM25 dalla collection
         self._rebuild_bm25()
         self._initialized = True
+        self._last_refresh = time.time()
+
+    def _maybe_refresh(self):
+        """Rilegge lo stato persistito di ChromaDB se è passato l'intervallo.
+
+        API e worker sono processi separati che condividono la stessa
+        directory persistente di ChromaDB. ChromaDB carica l'indice in
+        memoria al momento dell'apertura del client: le scritture fatte
+        dall'altro processo non diventano visibili senza riaprire il client.
+        Con un refresh periodico le ricerche (e quindi il RAG) vedono sempre
+        i documenti appena indicizzati, senza riavvii. In caso di errore si
+        continua con lo stato corrente (best-effort).
+        """
+        now = time.time()
+        if not self._initialized:
+            self.initialize()
+            return
+        if now - self._last_refresh < self.REFRESH_INTERVAL:
+            return
+        try:
+            with self._lock:
+                close = getattr(self._chroma, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:
+                        pass
+                client = chromadb.PersistentClient(
+                    path=str(settings.CHROMA_PERSIST_DIR)
+                )
+                collection = client.get_or_create_collection(
+                    name="knowlocal_chunks"
+                )
+                # Ricostruisce lo stato BM25 dai dati appena riletti
+                bm25_docs = []
+                all_data = collection.get(include=["documents"])
+                if all_data and all_data.get("ids"):
+                    bm25_docs = [
+                        {"id": id_, "text": doc}
+                        for id_, doc in zip(all_data["ids"], all_data["documents"])
+                    ]
+                new_index = None
+                if bm25_docs:
+                    tokenized = [d["text"].lower().split() for d in bm25_docs]
+                    new_index = BM25Okapi(tokenized)
+                self._chroma = client
+                self._collection = collection
+                self._bm25_docs = bm25_docs
+                self._bm25_index = new_index
+                self._last_refresh = now
+                logger.info(
+                    "Vector store aggiornato dal disco: %d chunk riletti",
+                    len(bm25_docs),
+                )
+        except Exception as e:
+            logger.warning(
+                "Refresh vector store non riuscito (uso stato corrente): %s", e
+            )
 
     def add_chunks(self, chunks: list, embeddings: list[list[float]], metadatas: list[dict]):
         """Aggiunge chunk e embedding al vector store.
@@ -105,7 +175,7 @@ class VectorStore:
         """
         if not ids:
             return {}
-        self.initialize()
+        self._maybe_refresh()
         result: dict[str, dict] = {}
         try:
             got = self._collection.get(ids=ids, include=["metadatas"])
@@ -122,7 +192,7 @@ class VectorStore:
         Returns:
             Lista di {id, text, score, metadata}.
         """
-        self.initialize()
+        self._maybe_refresh()
 
         results = self._collection.query(
             query_embeddings=[query_embedding],
@@ -148,7 +218,7 @@ class VectorStore:
         Returns:
             Lista di {id, text, score}.
         """
-        self.initialize()
+        self._maybe_refresh()
 
         if not self._bm25_index:
             return []
@@ -278,13 +348,12 @@ class VectorStore:
     @property
     def count(self) -> int:
         """Numero totale di chunk indicizzati."""
-        if not self._initialized:
-            self.initialize()
+        self._maybe_refresh()
         return self._collection.count()
 
     def get_stats(self) -> dict:
         """Statistiche del vector store."""
-        self.initialize()
+        self._maybe_refresh()
         return {
             "total_chunks": self._collection.count(),
             "bm25_docs": len(self._bm25_docs),

@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     #   sentence  — confeziona frasi complete fino alla dimensione target
     #   fixed     — finestra rigida di caratteri con overlap (nessun confine
     #               semantico)
+    #   page      — un chunk per pagina del documento originale (solo PDF)
     CHUNK_STRATEGY: str = Field(default="paragraph")
 
     # --- Embedding ---
@@ -110,6 +111,7 @@ class Settings(BaseSettings):
             "sentence": "sentence", "frase": "sentence", "frasi": "sentence",
             "fixed": "fixed", "fisso": "fixed", "finestra": "fixed",
             "window": "fixed", "raw": "fixed",
+            "page": "page", "pagina": "page", "pagine": "page",
         }
         return aliases.get(value.strip().lower(), "paragraph")
 

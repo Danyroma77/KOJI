@@ -146,6 +146,17 @@ class EmbeddingService:
     def dimension(self) -> int:
         return settings.EMBEDDING_DIMENSION
 
+    def warmup(self):
+        """Pre-carica il modello per evitare timeout alla prima query.
+
+        Il modello viene caricato in lazy loading al primo uso, il che può
+        causare timeout (30s) specialmente in container Docker con risorse
+        limitate. Questo metodo forza il caricamento sincrono all'avvio.
+        """
+        if self._model is None:
+            # Forza il caricamento del modello
+            _ = self.model
+
 
 # Istanza singleton
 embedding_service = EmbeddingService()

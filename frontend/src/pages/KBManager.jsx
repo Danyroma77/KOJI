@@ -40,6 +40,24 @@ const FORMAT_ICONS = {
   txt: FileCode,
 }
 
+const STRATEGY_LABELS = {
+  paragraph: 'Paragrafi',
+  section: 'Sezioni',
+  sentence: 'Frasi',
+  fixed: 'Fissa',
+  page: 'Pagina',
+}
+
+const FORMAT_LABELS = {
+  pdf: 'PDF (Portable Document Format)',
+  docx: 'DOCX (Word)',
+  odt: 'ODT (OpenDocument)',
+  html: 'HTML (HyperText Markup Language)',
+  md: 'Markdown',
+  eml: 'Email',
+  txt: 'Testo semplice',
+}
+
 function getFileIcon(format) {
   var key = String(format || '').toLowerCase().replace('.', '')
   return FORMAT_ICONS[key] || FileText
@@ -548,9 +566,9 @@ export default function KBManager() {
                           marginRight: 8, opacity: 0.5, flexShrink: 0,
                           color: 'var(--jeeg-green)',
                         }} aria-hidden="true" />
-                        <span>{doc.filename}</span>
+                        <span title={doc.filename}>{doc.filename}</span>
                       </td>
-                      <td><span className="format-badge">{doc.format || 'N/D'}</span></td>
+                      <td><span className="format-badge" title={FORMAT_LABELS[doc.format] || doc.format || 'N/D'}>{doc.format || 'N/D'}</span></td>
                       <td>
                         <span className={'badge ' + st.cls}
                           title={statusTooltip(doc, st)}
@@ -568,7 +586,31 @@ export default function KBManager() {
                         ) : '—'}
                       </td>
                       <td style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)', textAlign: 'center' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                         {doc.chunks_count != null ? doc.chunks_count : '—'}
+                        {doc.chunk_strategy && (
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              width: '16px',
+                              height: '16px',
+                              borderRadius: '50%',
+                              backgroundColor: 'var(--accent-subtle, #e0e7ff)',
+                              color: 'var(--accent, #4f46e5)',
+                              fontSize: '10px',
+                              fontWeight: 'bold',
+                              cursor: 'help',
+                              flexShrink: 0
+                            }}
+                            title={{`Strategia: ${STRATEGY_LABELS[doc.chunk_strategy] || doc.chunk_strategy}`}}
+                            aria-label={{`Strategia chunking: ${STRATEGY_LABELS[doc.chunk_strategy] || doc.chunk_strategy}`}}
+                          >
+                            i
+                          </span>
+                        )}
+                        </span>
                       </td>
                       <td style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
                         {doc.updated_at ? new Date(doc.updated_at).toLocaleDateString('it-IT') : '—'}

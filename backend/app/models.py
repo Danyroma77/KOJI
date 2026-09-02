@@ -72,6 +72,7 @@ class DocumentCatalogEntry(BaseModel):
     format: DocumentFormat
     status: DocumentStatus
     chunks_count: Optional[int] = None
+    chunk_strategy: Optional[str] = None
     metadata_structural: Optional[DocumentMetadata] = None
     metadata_semantic: Optional[DocumentSemanticMeta] = None
     metadata_tech: Optional[DocumentTechMeta] = None
@@ -285,7 +286,7 @@ class ServiceStatusResponse(BaseModel):
 # === Admin ===
 
 class AdminConfigUpdate(BaseModel):
-    # Strategia di segmentazione: paragraph | section | sentence | fixed
+    # Strategia di chunking: paragraph | section | sentence | fixed | page
     chunk_strategy: Optional[str] = None
     chunk_size: Optional[int] = Field(default=None, ge=64, le=2048)
     chunk_overlap_pct: Optional[int] = Field(default=None, ge=0, le=50)

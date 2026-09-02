@@ -18,8 +18,57 @@ class WikiGenerator:
     def __init__(self):
         self.wiki_dir = settings.WIKI_DIR
         self.wiki_dir.mkdir(parents=True, exist_ok=True)
+        self._llm_enabled = True
 
-    def generate_all(self, documents: list[dict]) -> dict:
+    async def _generate_with_llm(self, prompt: str, max_tokens: int = 1000) -> Optional[str]:
+        """Genera contenuto usando il LLM. Restituisce None se il LLM non è disponibile."""
+        if not self._llm_enabled:
+            return None
+        try:
+            response = await llm_manager.generate(
+                prompt=prompt,
+                max_tokens=max_tokens,
+                temperature=0.3,
+            )
+            return response.strip() if response else None
+        except Exception:
+            self._llm_enabled = False
+            return None
+
+    async def _enhance_page_content(self, title: str, content: str) -> str:
+        """Migliora il contenuto di una pagina usando il LLM."""
+        max_content_length = 3000
+        if len(content) > max_content_length:
+            content = content[:max_content_length] + "..."
+
+        prompt = WIKI_SUMMARY_PROMPT.format(title=title, content=content)
+        enhanced = await self._generate_with_llm(prompt, max_tokens=1500)
+
+        if enhanced and not enhanced.startswith("Errore"):
+            return enhanced
+        return content
+
+    async def _generate_page_intro(self, title: str, content: str) -> str:
+        """Genera un'introduzione per la pagina wiki."""
+        context = content[:500] if content else title
+
+        prompt = WIKI_INTRO_PROMPT.format(title=title, context=context)
+        intro = await self._generate_with_llm(prompt, max_tokens=200)
+
+        if intro and not intro.startswith("Errore"):
+            return intro
+        return ""
+
+    def generate_all_sync(self, documents: list[dict]) -> dict:
+        """Versione sincrona di generate_all per compatibilità."""
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return loop.run_until_complete(self.generate_all(documents))
+
+    async def generate_all(self, documents: list[dict]) -> dict:
         """Genera pagine wiki per tutti i documenti processati.
 
         Args:

@@ -163,6 +163,7 @@ async def _process_document(doc_id: str, filename: str, file_bytes: bytes, catal
         for doc in catalog["documents"]:
             if doc["id"] == doc_id:
                 doc["chunks_count"] = len(chunks)
+                doc["chunk_strategy"] = settings.CHUNK_STRATEGY
                 doc["status"] = DocumentStatus.READY.value
                 doc["updated_at"] = datetime.now().isoformat()
                 break
@@ -607,7 +608,7 @@ async def _regenerate_wiki(catalog: dict):
             })
 
     if docs_for_wiki:
-        wiki_generator.generate_all(docs_for_wiki)
+        wiki_generator.generate_all_sync(docs_for_wiki)
     else:
         wiki_generator.reset()
 

@@ -81,6 +81,18 @@ def create_app():
         except Exception as e:
             logger.warning("Ollama:      errore verifica — %s", e)
 
+        # Warmup del modello embedding per evitare timeout alla prima query
+        logger.info("Caricamento modello embedding '%s'...", settings.EMBEDDING_MODEL)
+        try:
+            from app.services.embedding_service import embedding_service
+            # Esegui il warmup in un thread separato per non bloccare l'event loop
+            import asyncio
+            await asyncio.to_thread(embedding_service.warmup)
+            logger.info("Modello embedding caricato con successo.")
+        except Exception as e:
+            logger.warning("Modello embedding non caricato: %s", e)
+            logger.warning("Il modello verrà caricato al primo uso (possibile timeout).")
+
         logger.info("==========================================")
         logger.info("API pronta su http://0.0.0.0:8000")
         logger.info("Docs:  http://localhost:8000/api/docs")

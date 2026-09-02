@@ -676,6 +676,18 @@
   box-shadow: none;
 }
 
+/* Avviso quando il retrieval non trova documenti pertinenti */
+.rag-empty-notice {
+  margin: var(--space-sm) var(--space-lg) 0;
+  padding: var(--space-md);
+  background: var(--jeeg-yellow-dim);
+  border: 1px dashed var(--jeeg-yellow);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
 /* === Pannello fonti RAG === */
 .rag-sources {
   background: var(--bg-card);

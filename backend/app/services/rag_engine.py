@@ -133,8 +133,12 @@ class RAGEngine:
         m = {"mode": mode, "reranked": False, "retrieval_time_ms": 0.0}
 
         # Embedding della query FUORI dall'event loop (thread + timeout):
-        # sincrono congelerebbe API e stream SSE (cursore bloccato lato UI)
-        query_embedding = await embedding_service.embed_query_async(question)
+        # sincrono congelerebbe API e stream SSE (cursore bloccato lato UI).
+        # In modalità bm25 l'embedding non serve: viene saltato per non
+        # creare una dipendenza inutile dal modello embedding.
+        query_embedding = None
+        if mode != "bm25":
+            query_embedding = await embedding_service.embed_query_async(question)
 
         if mode == "dense":
             results = vector_store.dense_search(
@@ -215,6 +219,13 @@ class RAGEngine:
             })
 
         context = "\n\n---\n\n".join(context_parts)
+        if not final_chunks:
+            # Prompt deterministico: senza documenti il modello non deve
+            # inventare nulla — dichiara apertamente la mancanza di dati.
+            context = (
+                "[Nessun documento pertinente trovato per questa domanda: "
+                "dichiara di non avere dati a disposizione e NON inventare una risposta.]"
+            )
         prompt = RAG_SYSTEM_PROMPT + "\n\n" + RAG_CONTEXT_TEMPLATE.format(
             chunks=context,
             question=question,
@@ -323,6 +334,26 @@ class RAGEngine:
                 "snippet": chunk["text"][:200] + "..." if len(chunk["text"]) > 200 else chunk["text"],
             })
 
+        # Retrieval vuoto: feedback esplicito invece di un silenzio o di una
+        # risposta inventata dal modello. Se l'indice non contiene i chunk
+        # (es. stato non ancora sincronizzato col worker) il messaggio rende
+        # il problema immediatamente visibile all'utente.
+        if not final_chunks:
+            try:
+                index_size = vector_store.count
+            except Exception:
+                index_size = 0
+            yield {
+                "type": "status",
+                "stage": "retrieval",
+                "message": (
+                    "Nessun documento pertinente trovato "
+                    f"(indice: {index_size} chunk). Verifica che il documento sia pronto "
+                    "e riprova con parole diverse."
+                ),
+                "empty": True,
+            }
+
         yield {"type": "sources", "sources": sources}
         yield {"type": "status", "stage": "generation",
                "message": "Generazione della risposta...",
@@ -334,6 +365,13 @@ class RAGEngine:
         for i, chunk in enumerate(final_chunks, start=1):
             context_parts.append(f"[{i}] {chunk['text']}")
         context = "\n\n---\n\n".join(context_parts)
+        if not final_chunks:
+            # Prompt deterministico: senza documenti il modello non deve
+            # inventare nulla — dichiara apertamente la mancanza di dati.
+            context = (
+                "[Nessun documento pertinente trovato per questa domanda: "
+                "dichiara di non avere dati a disposizione e NON inventare una risposta.]"
+            )
         prompt = RAG_SYSTEM_PROMPT + "\n\n" + RAG_CONTEXT_TEMPLATE.format(
             chunks=context,
             question=question,
@@ -360,6 +398,11 @@ class RAGEngine:
         t_gen_done = time.time()
         tok_per_sec = token_count / max(t_gen_done - t_gen, 0.001)
 
+        try:
+            index_size = vector_store.count
+        except Exception:
+            index_size = 0
+
         yield {
             "type": "metrics",
             "tok_per_sec": round(tok_per_sec, 1),
@@ -367,6 +410,7 @@ class RAGEngine:
             "tokens": token_count,
             # Tempo effettivo di embedding+retrieval+reranking, misurato PRIMA della generazione
             "retrieval_time_ms": round((t_retrieval_done - t_start) * 1000, 1),
+            "index_size": index_size,
         }
         yield {"type": "done"}
 

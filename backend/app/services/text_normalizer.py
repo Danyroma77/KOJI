@@ -26,6 +26,15 @@ class TextNormalizer:
         self.dedup_blocks = dedup_blocks
         self.min_block_length = min_block_length
 
+    # Separatore di pagina usato dal PDFParser (deve corrispondere)
+    PAGE_BREAK = "\f"
+    # Placeholder temporaneo per preservare i separatori di pagina
+    # durante la normalizzazione. Deve essere una stringa che:
+    # 1. Non viene rimossa da strip() o _final_cleanup
+    # 2. Non viene trattata come titolo da _clean_headings (non tutto maiuscolo)
+    # Ogni placeholder è univoco per evitare che venga rimosso da _deduplicate_blocks
+    _PAGE_PLACEHOLDER_PREFIX = "koji_page_break_placeholder_"
+
     def normalize(self, text: str) -> str:
         """Pipeline completa di normalizzazione.
 
@@ -37,6 +46,22 @@ class TextNormalizer:
         """
         if not text or not text.strip():
             return ""
+
+        # 0. Preserva i separatori di pagina prima della normalizzazione
+        # (il carattere \f verrebbe altrimenti alterato da _normalize_whitespace
+        # e _deduplicate_blocks rimuoverebbe i duplicati)
+        has_page_breaks = self.PAGE_BREAK in text
+        if has_page_breaks:
+            # Usa placeholder unici per evitare che vengano rimossi da deduplicazione
+            page_count = 0
+            result = []
+            for char in text:
+                if char == self.PAGE_BREAK:
+                    result.append(f"{self._PAGE_PLACEHOLDER_PREFIX}{page_count}")
+                    page_count += 1
+                else:
+                    result.append(char)
+            text = "".join(result)
 
         # 1. Normalizzazione spaziatura
         text = self._normalize_whitespace(text)
@@ -62,6 +87,13 @@ class TextNormalizer:
 
         # 7. Pulizia finale
         text = self._final_cleanup(text)
+
+        # 8. Ripristina i separatori di pagina alla fine
+        if has_page_breaks:
+            # Ripristina tutti i placeholder unici
+            for i in range(page_count):
+                placeholder = f"{self._PAGE_PLACEHOLDER_PREFIX}{i}"
+                text = text.replace(placeholder, self.PAGE_BREAK)
 
         return text.strip()
 

@@ -16,7 +16,10 @@ export default function RAG() {
   const [announce, setAnnounce] = useState('')
   // Fase corrente comunicata dal backend (status SSE): ricerca/generazione
   const [stage, setStage] = useState('')
+  // Avviso quando il retrieval non trova documenti (status SSE con empty=true)
+  const [emptyNotice, setEmptyNotice] = useState('')
   const [activeModel, setActiveModel] = useState(null)
+  const [retrievalMode, setRetrievalMode] = useState('hybrid')
   // null = verifica in corso, false = KB vuota, true = almeno un documento pronto
   const [kbReady, setKbReady] = useState(null)
   const messagesEndRef = useRef(null)
@@ -88,6 +91,7 @@ export default function RAG() {
     setSources([])
     setStage('')
     setAnnounce('')
+    setEmptyNotice('')
 
     // Reset metriche: i contatori ripartono per la nuova domanda. Il timer
     // aggiorna tok/s, token e TTFT stimati ogni 500 ms durante lo streaming.
@@ -119,7 +123,7 @@ export default function RAG() {
         headers: { 'Content-Type': 'application/json' },
         // Nessun modello esplicito: il backend usa automaticamente
         // il modello attivo selezionato dalla pagina dedicata ai modelli.
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question, retrieval_mode: retrievalMode }),
       })
 
       if (!res.ok) {
@@ -146,10 +150,12 @@ export default function RAG() {
 
             if (event.type === 'sources') {
               setSources(event.sources)
+              if (event.sources.length > 0) setEmptyNotice('')
               setStage('')
             } else if (event.type === 'status') {
               // Fase corrente: ricerca nei documenti / generazione risposta
               setStage(event.message || '')
+              if (event.empty) setEmptyNotice(event.message || '')
               // Inizio generazione: riferimento temporale per il TTFT live
               if (event.stage === 'generation') genStartRef.current = performance.now()
               // Latenza di ricerca inviata dal backend prima del primo token
@@ -246,6 +252,17 @@ export default function RAG() {
             <span className="badge-dot" aria-hidden="true" />
             {activeModel || 'Nessun modello'}
           </span>
+          <select
+            className="rag-select"
+            value={retrievalMode}
+            onChange={e => setRetrievalMode(e.target.value)}
+            aria-label="Modalità di retrieval"
+            title="Seleziona la modalità di retrieval"
+          >
+            <option value="hybrid">Hybrid (Dense + BM25)</option>
+            <option value="dense">Dense (Vettoriale)</option>
+            <option value="bm25">BM25 (Lessicale)</option>
+          </select>
           <button
             className="navbar-btn"
             onClick={() => navigate('/models')}
@@ -268,6 +285,12 @@ export default function RAG() {
                     ? 'Carica prima dei documenti dalla KB per abilitare le interrogazioni'
                     : 'Le risposte saranno anchorate ai documenti indicizzati'}
                 </p>
+              </div>
+            )}
+
+            {emptyNotice && (
+              <div className="rag-empty-notice" role="status">
+                {emptyNotice}
               </div>
             )}
 
