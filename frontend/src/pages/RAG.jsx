@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Send, Settings } from 'lucide-react'
+import { Send, Settings, Copy, Check } from 'lucide-react'
 
 export default function RAG() {
   const [messages, setMessages] = useState([])
@@ -22,6 +22,7 @@ export default function RAG() {
   const [retrievalMode, setRetrievalMode] = useState('hybrid')
   // null = verifica in corso, false = KB vuota, true = almeno un documento pronto
   const [kbReady, setKbReady] = useState(null)
+  const [copiedMetrics, setCopiedMetrics] = useState(false)
   const messagesEndRef = useRef(null)
   // Contatori per le metriche live: aggiornati ad ogni token senza re-render
   const tokenCountRef = useRef(0)
@@ -235,6 +236,33 @@ export default function RAG() {
     }
   }
 
+  // Copia la tabella metriche negli appunti (formato Markdown per tesi)
+  async function copyMetrics() {
+    const rows = [
+      ['Ricerca', metrics.retrieval, 'Tempo impiegato per recuperare i documenti dalla Knowledge Base (ms)'],
+      ['Throughput', `${metrics.tokPerSec} tok/s`, 'Velocità di generazione dei token al secondo'],
+      ['TTFT', metrics.ttft, 'Time To First Token: tempo prima del primo token generato (ms)'],
+      ['Token', `${metrics.tokens} token`, 'Numero totale di token generati nella risposta'],
+    ]
+    const md = '| Metrica | Valore | Descrizione |\n|---------|-------|-------------|\n' +
+      rows.map(r => `| ${r[0]} | ${r[1]} | ${r[2]} |`).join('\n')
+    try {
+      await navigator.clipboard.writeText(md)
+      setCopiedMetrics(true)
+      setTimeout(() => setCopiedMetrics(false), 2000)
+    } catch {
+      // Fallback per browser che non supportano clipboard API
+      const ta = document.createElement('textarea')
+      ta.value = md
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+      setCopiedMetrics(true)
+      setTimeout(() => setCopiedMetrics(false), 2000)
+    }
+  }
+
   return (
     <div className="animate-fade-in" aria-label="Interrogazione RAG">
       {/* Annuncio per screen reader a fine generazione (regione live) */}
@@ -297,7 +325,11 @@ export default function RAG() {
             {messages.map((msg, i) => (
               <div key={i} className={`rag-msg ${msg.role}`}>
                 <div className="rag-msg-avatar" aria-hidden="true">
-                  {msg.role === 'assistant' ? 'KL' : 'UT'}
+                  {msg.role === 'assistant' ? (
+                    <img src="/jeeg.jpg" alt="Jeeg Robot" className="rag-avatar-icon" />
+                  ) : (
+                    'UT'
+                  )}
                 </div>
                 <div className="rag-msg-body">
                   {msg.role === 'assistant' ? (
@@ -365,16 +397,54 @@ export default function RAG() {
               ))
             )}
           </div>
-          <div className="rag-sources-footer">
-            <span className="rag-metric">Ricerca <strong>{metrics.retrieval}</strong></span>
-            <span className="rag-metric"><strong>{metrics.tokPerSec}</strong> tok/s</span>
-            <span className="rag-metric">TTFT <strong>{metrics.ttft}</strong></span>
-            <span className="rag-metric"><strong>{metrics.tokens}</strong> token</span>
+          <div className="rag-metrics-container">
+            <div className="rag-metrics-header">
+              <span className="rag-metrics-title">Metriche</span>
+              <button
+                className={`rag-copy-btn ${copiedMetrics ? 'copied' : ''}`}
+                onClick={copyMetrics}
+                title="Copia tabella per tesi (Markdown)"
+              >
+                {copiedMetrics ? <Check size={14} /> : <Copy size={14} />}
+                {copiedMetrics ? 'Copiata!' : 'Copia'}
+              </button>
+            </div>
+            <table className="rag-metrics-table">
+              <thead>
+                <tr>
+                  <th>Metrica</th>
+                  <th>Valore</th>
+                  <th>Descrizione</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Ricerca</td>
+                  <td><strong>{metrics.retrieval}</strong></td>
+                  <td className="rag-metric-desc">Tempo per recuperare documenti dalla KB (ms)</td>
+                </tr>
+                <tr>
+                  <td>Throughput</td>
+                  <td><strong>{metrics.tokPerSec}</strong> tok/s</td>
+                  <td className="rag-metric-desc">Velocità di generazione token al secondo</td>
+                </tr>
+                <tr>
+                  <td>TTFT</td>
+                  <td><strong>{metrics.ttft}</strong></td>
+                  <td className="rag-metric-desc">Time To First Token: tempo primo token (ms)</td>
+                </tr>
+                <tr>
+                  <td>Token</td>
+                  <td><strong>{metrics.tokens}</strong></td>
+                  <td className="rag-metric-desc">Numero totale di token generati</td>
+                </tr>
+              </tbody>
+            </table>
             {metrics.live && (
-              <span className="rag-metric-live">
+              <div className="rag-metric-live">
                 <span className="rag-metric-live-dot" aria-hidden="true" />
                 live
-              </span>
+              </div>
             )}
           </div>
         </aside>
@@ -385,14 +455,28 @@ export default function RAG() {
 
 // Markdown inline senza dipendenze extra
 function renderInlineMarkdown(text) {
-  return text
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .split(/(\[.+?\]\(.+?\))/g)
-    .map((part, i) => {
-      const match = part.match(/^\[(.+?)\]\((.+?)\)$/)
-      if (match) {
-        return <a key={i} href={match[2]} onClick={e => e.preventDefault()} className="rag-msg-citation">{match[1]}</a>
-      }
-      return <span key={i}>{part}</span>
-    })
+  // Split by links to preserve them
+  const parts = text.split(/(\[.+?\]\(.+?\))/g)
+  
+  return parts.map((part, i) => {
+    // Check if this part is a link
+    const linkMatch = part.match(/^\[(.+?)\]\((.+?)\)$/)
+    if (linkMatch) {
+      return <a key={i} href={linkMatch[2]} onClick={e => e.preventDefault()} className="rag-msg-citation">{linkMatch[1]}</a>
+    }
+    
+    // For non-link parts, handle bold markers by splitting on **text**
+    const boldParts = part.split(/(\*\*.+?\*\*)/g)
+    return (
+      <span key={i}>
+        {boldParts.map((bp, j) => {
+          const boldMatch = bp.match(/^\*\*(.+?)\*\*$/)
+          if (boldMatch) {
+            return <strong key={j}>{boldMatch[1]}</strong>
+          }
+          return <span key={j}>{bp}</span>
+        })}
+      </span>
+    )
+  })
 }

@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     # --- LLM (Ollama in Docker) ---
     OLLAMA_BASE_URL: str = Field(default="http://ollama:11434")
     OLLAMA_MODEL: str = Field(default="phi3:3.8b")
-    OLLAMA_TIMEOUT: int = Field(default=120)
+    OLLAMA_TIMEOUT: int = Field(default=300)
     # Quanto tenere un modello in memoria dopo una richiesta ("metterlo in linea")
     OLLAMA_KEEP_ALIVE: str = Field(default="30m")
     # Timeout per il download (pull) dei modelli — alcuni sono da multi-GB

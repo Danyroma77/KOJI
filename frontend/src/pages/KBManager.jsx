@@ -604,8 +604,8 @@ export default function KBManager() {
                               cursor: 'help',
                               flexShrink: 0
                             }}
-                            title={{`Strategia: ${STRATEGY_LABELS[doc.chunk_strategy] || doc.chunk_strategy}`}}
-                            aria-label={{`Strategia chunking: ${STRATEGY_LABELS[doc.chunk_strategy] || doc.chunk_strategy}`}}
+                            title={`Strategia: ${STRATEGY_LABELS[doc.chunk_strategy] || doc.chunk_strategy}`}
+                            aria-label={`Strategia chunking: ${STRATEGY_LABELS[doc.chunk_strategy] || doc.chunk_strategy}`}
                           >
                             i
                           </span>

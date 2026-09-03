@@ -139,6 +139,16 @@ class LLMManager:
         return httpx.Timeout(connect=5.0, read=float(self.timeout),
                              write=30.0, pool=5.0)
 
+    def _stream_timeout(self) -> httpx.Timeout:
+        """Timeout per le chiamate streaming.
+
+        Durante lo streaming, il timeout di lettura non può essere limitato
+        perché il LLM potrebbe impiegare molto tempo a generare il prossimo
+        token (specialmente su CPU). Usamo un timeout molto ampio per il read.
+        """
+        return httpx.Timeout(connect=5.0, read=1800.0,
+                             write=30.0, pool=5.0)
+
     async def generate(
         self,
         prompt: str,
@@ -198,7 +208,7 @@ class LLMManager:
             }
         }
 
-        async with httpx.AsyncClient(timeout=self._http_timeout()) as client:
+        async with httpx.AsyncClient(timeout=self._stream_timeout()) as client:
             async with client.stream(
                 "POST",
                 f"{self.base_url}/api/generate",
