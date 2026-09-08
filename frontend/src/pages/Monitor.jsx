@@ -1,3 +1,28 @@
+/**
+ * =============================================================================
+ * PAGINA MONITOR — METRICHE DI SISTEMA
+ * =============================================================================
+ * 
+ * Dashboard per il monitoraggio in tempo reale delle metriche di sistema.
+ * 
+ * SEZIONI:
+ * - Stato LLM: modello attivo, keep-alive, stato Ollama
+ * - Risorse sistema: CPU, RAM, VRAM (con barre di progresso)
+ * - Stato Retrieval: chunk indicizzati in ChromaDB
+ * - Stato servizi: Ollama, ChromaDB, File Store, API
+ * - Storico attività: cronologia completa con paginazione e filtri
+ * 
+ * METRICHE:
+ * - CPU: percentuale di utilizzo
+ * - RAM: utilizzo in GB e percentuale
+ * - Chunk: numero totale indicizzati
+ * - Servizi: stato online/offline
+ * 
+ * POLLING:
+ * - Metriche: ogni 5 secondi
+ * - Attività: ogni 10 secondi
+ */
+
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Cpu, MemoryStick, Gauge, Server, History, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react'
 import { listActivities } from '../services/documents'

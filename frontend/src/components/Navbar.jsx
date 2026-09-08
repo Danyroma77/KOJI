@@ -1,3 +1,29 @@
+/**
+ * =============================================================================
+ * NAVBAR — BARRA DI NAVIGAZIONE PRINCIPALE
+ * =============================================================================
+ * 
+ * Componente per la navigazione principale dell'applicazione.
+ * Include link a tutte le pagine e supporto per menu mobile.
+ * 
+ * CARATTERISTICHE:
+ * - Navigazione con React Router (NavLink)
+ * - Icone Lucide React per ogni sezione
+ * - Menu hamburger per dispositivi mobili
+ * - Evidenziazione pagina attiva
+ * - Accessibilità WCAG con attributi ARIA
+ * 
+ * SEZIONI:
+ * - Home: dashboard principale
+ * - RAG: interrogazione Knowledge Base
+ * - Grafo: Knowledge Graph interattivo
+ * - Wiki: pagine semantiche generate
+ * - KB: gestione documenti
+ * - Modelli: gestione modelli LLM
+ * - Monitor: metriche di sistema
+ * - Admin: configurazione (icona ingranaggio)
+ */
+
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   Home, MessageSquare, Network, BookOpen,
@@ -5,6 +31,10 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 
+/**
+ * Configurazione link di navigazione.
+ * Ogni link ha: percorso, icona e etichetta visualizzata.
+ */
 const links = [
   { to: '/', icon: Home, label: 'Home' },
   { to: '/rag', icon: MessageSquare, label: 'RAG' },
@@ -15,6 +45,15 @@ const links = [
   { to: '/monitor', icon: Activity, label: 'Monitor' },
 ]
 
+/**
+ * Componente Navbar.
+ * 
+ * Renderizza:
+ * - Logo Koji con link alla home
+ * - Menu desktop con link alle sezioni
+ * - Pulsante hamburger per menu mobile
+ * - Link alla pagina Admin
+ */
 export default function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const location = useLocation()

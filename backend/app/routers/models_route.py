@@ -1,5 +1,29 @@
 """
-Router Modelli — Gestione modelli LLM tramite Ollama.
+=============================================================================
+ROUTER MODELLI — GESTIONE MODELLI LLM TRAMITE OLLAMA
+=============================================================================
+
+Gestisce le operazioni sui modelli LLM: catalogo, selezione, download e monitoraggio.
+
+ENDPOINT:
+GET  /api/models/catalog         — Catalogo modelli con stato reale
+GET  /api/models                 — Modelli installati in Ollama
+POST /api/models/select          — Seleziona modello attivo
+POST /api/models/pull            — Avvia download modello
+GET  /api/models/pull/progress   — Stato download
+POST /api/models/load            — Carica modello in memoria
+POST /api/models/unload          — Scarica modello dalla memoria
+GET  /api/models/health          — Stato connettività Ollama
+
+STATO MODELLI:
+- downloaded: scaricato e disponibile
+- online: caricato in memoria (in linea)
+- active: modello attivo per la generazione
+
+OPERAZIONS:
+- Pull: download asincrono con progresso
+- Select: cambio modello attivo
+- Load/Unload: gestione memoria
 """
 
 from __future__ import annotations
@@ -17,16 +41,32 @@ from app.models import (
 )
 from app.services.llm_manager import llm_manager
 
+# Router con prefisso /api/models
 router = APIRouter(prefix="/models", tags=["models"])
 
 
 def _base_name(name: str) -> str:
-    """Riduce un nome modello alla parte base (senza tag)."""
+    """
+    Riduce un nome modello alla parte base (senza tag).
+    
+    Es: "llama3.2:3b" -> "llama3.2"
+    """
     return (name or "").split(":", 1)[0].lower()
 
 
 def _find_installed(installed: dict, raw_name: str):
-    """Cerca un modello tra quelli installati: prima uguaglianza esatta, poi base."""
+    """
+    Cerca un modello tra quelli installati.
+    
+    Prima prova uguaglianza esatta, poi confronto per nome base.
+    
+    Args:
+        installed: Dict dei modelli installati
+        raw_name: Nome del modello da cercare
+        
+    Returns:
+        Metadati del modello o None
+    """
     if raw_name in installed:
         return installed[raw_name]
     base = _base_name(raw_name)

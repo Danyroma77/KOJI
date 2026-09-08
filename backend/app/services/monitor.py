@@ -1,5 +1,22 @@
 """
-Monitor — Raccolta metriche di sistema tramite psutil.
+=============================================================================
+MONITOR — RACCOLTA METRICHE DI SISTEMA TRAMITE PSUTIL
+=============================================================================
+
+Raccoglie metriche di sistema per il monitoraggio della piattaforma.
+Include CPU, RAM, VRAM (NVIDIA), stato servizi e statistiche KB.
+
+METRICHE RACCOLTE:
+- CPU: percentuale di utilizzo
+- RAM: totale, usata, percentuale
+- VRAM: totale, usata (se GPU NVIDIA disponibile)
+- Servizi: Ollama, ChromaDB, File Store
+- KB: numero documenti, numero chunk
+
+STRUMENTI:
+- psutil: metriche CPU/RAM
+- nvidia-smi: metriche GPU (opzionale)
+- API Ollama: stato connettività
 """
 
 from __future__ import annotations
@@ -10,7 +27,16 @@ from app.config import settings
 
 
 async def get_system_metrics() -> dict:
-    """Raccolta completa delle metriche di sistema."""
+    """
+    Raccolta completa delle metriche di sistema.
+    
+    Returns:
+        Dict con metriche CPU, RAM, VRAM, servizi e KB
+        
+    Note:
+        - VRAM disponibile solo con GPU NVIDIA e nvidia-smi installato
+        - Il modello attivo è riportato solo se effettivamente installato
+    """
     # Risorse hardware
     cpu_percent = psutil.cpu_percent(interval=0.5)
     ram = psutil.virtual_memory()
@@ -85,7 +111,12 @@ async def get_system_metrics() -> dict:
 
 
 async def get_service_status() -> dict:
-    """Stato semplificato dei servizi."""
+    """
+    Stato semplificato dei servizi.
+    
+    Returns:
+        Dict con stato di Ollama, ChromaDB, File Store e API
+    """
     ollama_ok = await llm_manager.check_health()
 
     chroma_ok = True
@@ -104,7 +135,12 @@ async def get_service_status() -> dict:
 
 
 async def _run_nvidia_smi() -> dict | None:
-    """Esegue nvidia-smi per ottenere info VRAM."""
+    """
+    Esegue nvidia-smi per ottenere info VRAM.
+    
+    Returns:
+        Dict con total_mb e used_mb, o None se non disponibile
+    """
     import subprocess
     try:
         result = subprocess.run(

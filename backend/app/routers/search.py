@@ -1,11 +1,27 @@
 """
-Router Ricerca — Ricerca nella Knowledge Base (BE-RF-12/13/14).
+=============================================================================
+ROUTER RICERCA — RICERCA NELLA KNOWLEDGE BASE (BE-RF-12/13/14)
+=============================================================================
 
-POST /api/search — esegue ricerca Dense (HNSW), BM25 o Hybrid (RRF)
-nella KB indicizzata e restituisce risultati rankati con punteggi e metadati.
+Questo router espone l'endpoint per cercare chunk nella Knowledge Base
+con diverse modalità di retrieval.
 
-La modalità Hybrid fonde i risultati densi e lessicali tramite Reciprocal
-Rank Fusion come previsto dalla specifica operativa (sezione 8).
+ENDPOINT:
+POST /api/search — Ricerca con modalità selezionabile
+
+MODALITÀ DI RICERCA:
+- "dense": ricerca vettoriale (HNSW) basata su similarità semantica
+- "bm25": ricerca lessicale (keyword) basata su corrispondenza esatta
+- "hybrid": fusione RRF di dense + BM25 (default, miglior qualità)
+
+RE-RANKING:
+- Opzionale con cross-encoder (BE-RF-15)
+- Riordina i candidati per migliorare la pertinenza
+- Eseguito in thread separato per non bloccare l'API
+
+METRICHE:
+- Ogni ricerca viene registrata per il monitoraggio
+- Latenza, numero risultati, dimensione indice
 """
 
 from __future__ import annotations
@@ -28,11 +44,17 @@ from app.services.metrics_store import metrics_store
 
 logger = logging.getLogger("koji")
 
+# Router con prefisso /api/search
 router = APIRouter(prefix="/search", tags=["search"])
 
 
 def _enrich_metadata(items: list[dict]) -> list[dict]:
-    """Aggiunge i metadati ai risultati che non li hanno (caso BM25-only)."""
+    """
+    Aggiunge i metadati ai risultati che non li hanno.
+    
+    Necessario per i risultati BM25-only che non includono metadati.
+    Recupera i metadati da ChromaDB per ID mancanti.
+    """
     missing = [i["id"] for i in items if not i.get("metadata")]
     if missing:
         got = vector_store.get_metadata_for_ids(missing)
@@ -44,10 +66,23 @@ def _enrich_metadata(items: list[dict]) -> list[dict]:
 
 @router.post("", response_model=SearchResponse)
 async def search(request: SearchQueryRequest):
-    """Ricerca nella Knowledge Base con modalità selezionabile.
-
-    Mode ammesse: ``dense``, ``bm25``, ``hybrid`` (default).
-    Con ``rerank=True`` si applica il cross-encoder sui candidati (BE-RF-15).
+    """
+    Esegue una ricerca nella Knowledge Base.
+    
+    Args:
+        request: SearchQueryRequest con query, modalità e parametri
+        
+    Returns:
+        SearchResponse con risultati, punteggi e metriche
+        
+    Raises:
+        422: Query vuota
+        500: Errore durante la ricerca
+        
+    Note:
+        - L'embedding della query è eseguito in thread separato (non blocca API)
+        - Il re-ranking è opzionale e disabilitabile via configurazione
+        - Le metriche vengono registrate per il monitoraggio
     """
     if not request.query.strip():
         raise HTTPException(status_code=422, detail="Query di ricerca vuota")
@@ -57,7 +92,7 @@ async def search(request: SearchQueryRequest):
 
     try:
         if mode == SearchMode.DENSE.value:
-            # Embedding fuori dall'event loop (thread + timeout)
+            # Ricerca vettoriale: embedding della query + HNSW
             query_embedding = await embedding_service.embed_query_async(request.query)
             results = vector_store.dense_search(
                 query_embedding,
@@ -65,12 +100,14 @@ async def search(request: SearchQueryRequest):
             )
             results = _enrich_metadata(results)
         elif mode == SearchMode.BM25.value:
+            # Ricerca lessicale: matching esatto di parole
             results = vector_store.keyword_search(
                 request.query,
                 top_k=request.top_k,
             )
             results = _enrich_metadata(results)
         else:  # hybrid
+            # Fusione RRF di dense + BM25
             query_embedding = await embedding_service.embed_query_async(request.query)
             results = vector_store.hybrid_search(
                 query=request.query,
@@ -83,9 +120,11 @@ async def search(request: SearchQueryRequest):
         logger.warning("Ricerca fallita: %s", e)
         raise HTTPException(status_code=500, detail=f"Errore ricerca: {str(e)[:200]}")
 
-    # Re-ranking opzionale con cross-encoder (BE-RF-15, P1 "se configurato").
-    # Il predict gira FUORI dall'event loop (thread + timeout) in
-    # rag_engine.rerank_scores: bloccarlo qui congelerebbe l'intera API.
+    # =========================================================================
+    # RE-RANKING OPZIONALE CON CROSS-ENCODER (BE-RF-15)
+    # =========================================================================
+    # Il cross-encoder riordina i candidati per migliorare la pertinenza.
+    # Eseguito in thread separato per non bloccare l'event loop.
     rerank_used = False
     if request.rerank or settings.RAG_RERANK_ENABLED:
         from app.services.rag_engine import rag_engine
@@ -107,7 +146,7 @@ async def search(request: SearchQueryRequest):
 
     latency_ms = (time.time() - t_start) * 1000
 
-    # Registra la metrica di retrieval
+    # Registra metriche per monitoraggio
     try:
         index_size = vector_store.count
         metrics_store.record_retrieval(
@@ -120,6 +159,7 @@ async def search(request: SearchQueryRequest):
     except Exception:
         pass
 
+    # Costruisce risposta con tutti i punteggi
     items = [
         SearchResultItem(
             id=r["id"],

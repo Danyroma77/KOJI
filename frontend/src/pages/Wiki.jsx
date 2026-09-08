@@ -1,3 +1,29 @@
+/**
+ * =============================================================================
+ * PAGINA WIKI — WIKI SEMANTICA GENERATA
+ * =============================================================================
+ * 
+ * Visualizzazione della wiki generata automaticamente dai documenti della KB.
+ * 
+ * FUNZIONALITÀ:
+ * - Indice navigabile per categorie (Regolamenti, Circolari, Procedure, FAQ, Altro)
+ * - Ricerca pagine per nome
+ * - Visualizzazione contenuto Markdown con react-markdown
+ * - Fonti citate per ogni pagina
+ * - Aggiornamento automatico quando si rigenera la wiki
+ * 
+ * STRUTTURA:
+ * - Indice: gruppi di pagine con conteggio
+ * - Pagine: contenuto Markdown con titolo, corpo e fonti
+ * 
+ * CATEGORIE (generate automaticamente):
+ * - Regolamenti: file con "regolament" nel nome
+ * - Circolari: file con "circolar" nel nome
+ * - Procedure: file con "procedur" o "manuale" nel nome
+ * - FAQ: file con "faq" nel nome
+ * - Altro: tutto il resto
+ */
+
 import { useState, useEffect, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'

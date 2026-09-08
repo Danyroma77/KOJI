@@ -1,3 +1,34 @@
+/**
+ * =============================================================================
+ * PAGINA KB MANAGER — GESTIONE DOCUMENTI
+ * =============================================================================
+ * 
+ * Interfaccia per gestire i documenti della Knowledge Base.
+ * 
+ * FUNZIONALITÀ:
+ * - Upload multiplo di documenti (drag & drop)
+ * - Lista documenti con stato, formato, dimensione
+ * - Azioni per singolo documento:
+ *   - Visualizza testo normalizzato
+ *   - Riprocessa (parsing → chunking → embedding)
+ *   - Rigenera wiki
+ *   - Rigenera grafo
+ *   - Download file originale
+ *   - Elimina
+ * - Eliminazione completa della KB
+ * - Monitoraggio job di processing
+ * 
+ * FORMATI SUPPORTATI:
+ * - PDF, DOCX, ODT, HTML, Markdown, Email, Testo
+ * 
+ * STATO DOCUMENTI:
+ * - uploaded → parsing → normalizing → chunking → embedding → ready
+ * - error in qualsiasi fase
+ * 
+ * POLLING:
+ * - Job status: ogni 2 secondi durante elaborazione
+ */
+
 // v20260827c - azioni per singolo documento: riprocessamento del file,
 //              rigenerazione wiki e ri-estrazione grafo tramite nuovi job
 //              indipendenti (endpoint POST /documents/{id}/reprocess,

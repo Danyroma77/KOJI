@@ -1,7 +1,30 @@
 """
-Koji Worker — Processo separato che esegue i job della coda.
-Avviato con: python -m app.worker
-Non dipende dall'API — puo essere riavviato indipendentemente.
+=============================================================================
+KOJI WORKER — PROCESSO SEPARATO PER ESECUZIONE JOB
+=============================================================================
+
+Il worker è un processo indipendente dall'API che esegue operazioni lunghe
+e CPU-bound in background. Avviato con: python -m app.worker
+
+RESPONSABILITÀ:
+- Processare documenti (parsing, normalizzazione, chunking, embedding)
+- Generare Knowledge Graph (estrazione entità/relazioni via LLM)
+- Generare Wiki semantica (aggregazione contenuti)
+
+VANTAGNI DEL PROCESSO SEPARATO:
+- Non blocca l'API durante operazioni lunghe
+- Può essere riavviato indipendently dall'API
+- Permette scaling separato (più worker se necessario)
+- Isola errori: un crash del worker non ferma l'API
+
+GESTIONE SHUTDOWN:
+- Riceve SIGTERM/SIGINT per shutdown elegante
+- Termina il job corrente prima di uscire
+- I job incompleti restano in coda per il prossimo avvio
+
+COMUNICAZIONE:
+- Condivide la stessa filesystem dell'API (job queue su disco)
+- Usa la stessa directory di dati (/data)
 """
 
 import logging
@@ -10,6 +33,7 @@ import signal
 import sys
 from datetime import datetime
 
+# Configurazione logging specifica per il worker
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] worker: %(message)s",
@@ -17,21 +41,51 @@ logging.basicConfig(
 )
 logger = logging.getLogger("koji-worker")
 
+# Flag globale per gestire il shutdown elegante
 _shutdown = False
 
 
 def signal_handler(sig, frame):
+    """
+    Gestore dei segnali per shutdown elegante.
+    
+    Quando il processo riceve SIGTERM (Docker stop) o SIGCTRL (Ctrl+C),
+    imposta il flag _shutdown per terminare il job corrente e uscire.
+    """
     global _shutdown
     logger.info("Shutdown richiesto — finisco il job corrente...")
     _shutdown = True
 
 
+# Registrazione dei gestori segnali
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
 
 def process_document_job(job):
-    """Esegue il processing completo di un documento."""
+    """
+    Esegue il processing completo di un documento nella pipeline.
+    
+    PIPELINE (5 fasi sequenziali):
+    1. Parsing: estrazione testo grezzo dal file (PDF, DOCX, etc.)
+    2. Normalizzazione: pulizia e conversione in Markdown uniforme
+    3. Chunking: suddivisione in segmenti per l'indicizzazione
+    4. Embedding: generazione vettori semantici per ogni chunk
+    5. Indicizzazione: salvataggio in ChromaDB per la ricerca
+    
+    Args:
+        job: Oggetto Job con payload {doc_id, filename, raw_path}
+        
+    Returns:
+        Dict con risultato del processing (chunks_count, skipped, etc.)
+        
+    Note:
+        - Il documento può essere stato eliminato mentre era in coda:
+          in tal caso salta il processing senza errori
+        - Ogni fase viene misurata per le metriche di performance
+        - In caso di errore, il documento viene marcato come ERROR
+    """
+    # Import locali per evitare dipenze circolari
     from app.services.document_parser import parse_document, compute_sha256
     from app.services.text_normalizer import normalizer
     from app.services.chunk_manager import chunk_manager
@@ -46,27 +100,37 @@ def process_document_job(job):
     from pathlib import Path
     import time
 
+    # Estrazione dati dal payload del job
     doc_id = job.payload["doc_id"]
     filename = job.payload["filename"]
     raw_path = Path(job.payload["raw_path"])
 
+    # Caricamento catalogo documenti
     catalog = _load_catalog()
 
-    # Il documento può essere stato eliminato mentre il job era in coda:
-    # in tal caso si salta il processing senza segnare un errore fittizio
-    # nella cronologia delle attività.
+    # Controllo eliminazione: se il documento è stato cancellato mentre era in coda,
+    # salta il processing senza segnare un errore fittizio
     if not any(d["id"] == doc_id for d in catalog["documents"]):
         logger.info("[%s] SALTATO: %s eliminato prima del processing", job.id, filename)
         return {"skipped": True, "filename": filename}
 
+    # Numero totale di fasi per il calcolo del progresso
     total_steps = 5
 
     def update_progress(step, sub=0):
+        """Aggiorna il progresso del job (0.0 - 1.0)."""
         job_queue.update_progress(job.id, (step + sub * 0.2) / total_steps)
 
+    # Percorso dove salvare il testo normalizzato
     processed_path = settings.PROCESSED_DIR / f"{doc_id}.md"
 
     def _mark_doc_error(msg: str):
+        """
+        Marca un documento come in errore nel catalogo.
+        
+        Args:
+            msg: Messaggio di errore da salvare
+        """
         for doc in catalog["documents"]:
             if doc["id"] == doc_id:
                 doc["status"] = DocumentStatus.ERROR.value
@@ -75,9 +139,11 @@ def process_document_job(job):
                 break
         _save_catalog(catalog)
 
-    # ============ FASE 1 — Parsing + Normalizzazione + Metadati ============
-    # Dipendono tra loro (una produce l'input della successiva): un errore
-    # qui rende impossibile tutto il resto, quindi il job termina.
+    # =========================================================================
+    # FASE 1 — PARSING + NORMALIZZAZIONE + METADATI
+    # =========================================================================
+    # Queste operazioni sono sequenziali perché ogni fase produce l'input
+    # per la successiva. Un errore qui rende impossibile tutto il resto.
     try:
         logger.info("[%s] Parsing: %s", job.id, filename)
         t_phase = time.time()

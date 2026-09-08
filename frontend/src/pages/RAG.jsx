@@ -1,6 +1,33 @@
+/**
+ * =============================================================================
+ * PAGINA RAG — INTERROGAZIONE KNOWLEDGE BASE
+ * =============================================================================
+ * 
+ * Interfaccia per interrogare la Knowledge Base tramite RAG con streaming SSE.
+ * 
+ * FUNZIONALITÀ:
+ * - Chat interattiva con risposte in tempo reale
+ * - Visualizzazione fonti citate con punteggi
+ * - Metriche live (tok/s, TTFT, latency)
+ * - Selezione modello e modalità di retrieval
+ * - Copia metriche in formato Markdown per tesi
+ * 
+ * FLUSSO:
+ * 1. Utente inserisce domanda
+ * 2. Invio a /api/rag/query con SSE
+ * 3. Ricezione eventi: status, sources, token, metrics, done
+ * 4. Visualizzazione progressiva della risposta
+ * 
+ * METRICHE:
+ * - Ricerca: tempo recupero documenti (ms)
+ * - Throughput: token al secondo
+ * - TTFT: Time To First Token (ms)
+ * - Token: numero totale generati
+ */
+
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Send, Settings, Copy, Check } from 'lucide-react'
+import { Send, Settings, Copy, Check, User, Trash2 } from 'lucide-react'
 
 export default function RAG() {
   const [messages, setMessages] = useState([])
@@ -23,6 +50,7 @@ export default function RAG() {
   // null = verifica in corso, false = KB vuota, true = almeno un documento pronto
   const [kbReady, setKbReady] = useState(null)
   const [copiedMetrics, setCopiedMetrics] = useState(false)
+  const [viewingDoc, setViewingDoc] = useState(null)
   const messagesEndRef = useRef(null)
   // Contatori per le metriche live: aggiornati ad ogni token senza re-render
   const tokenCountRef = useRef(0)
@@ -229,6 +257,25 @@ export default function RAG() {
     }
   }
 
+  // Pulisce l'interfaccia RAG: rimuove messaggi, fonti, metriche e resetta lo stato
+  function handleClear() {
+    if (isStreaming) return // Non pulire durante lo streaming
+    setMessages([])
+    setInput('')
+    setSources([])
+    setMetrics({ tokPerSec: '—', ttft: '—', tokens: '—', retrieval: '—', live: false })
+    setAnnounce('')
+    setStage('')
+    setEmptyNotice('')
+    setCopiedMetrics(false)
+    setViewingDoc(null)
+    // Resetta anche i contatori live
+    tokenCountRef.current = 0
+    firstTokenAtRef.current = 0
+    genStartRef.current = 0
+    clearInterval(metricsTimerRef.current)
+  }
+
   function handleKeyDown(e) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -299,6 +346,15 @@ export default function RAG() {
           >
             <Settings size={16} />
           </button>
+          <button
+            className="navbar-btn"
+            onClick={handleClear}
+            disabled={isStreaming}
+            aria-label="Pulisci conversazione"
+            title="Rimuovi domande, risposte e fonti"
+          >
+            <Trash2 size={16} />
+          </button>
         </div>
       </div>
 
@@ -328,7 +384,7 @@ export default function RAG() {
                   {msg.role === 'assistant' ? (
                     <img src="/jeeg.jpg" alt="Jeeg Robot" className="rag-avatar-icon" />
                   ) : (
-                    'UT'
+                    <User size={18} />
                   )}
                 </div>
                 <div className="rag-msg-body">

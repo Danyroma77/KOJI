@@ -1,3 +1,28 @@
+/**
+ * =============================================================================
+ * PAGINA MODELLI — GESTIONE MODELLI LLM
+ * =============================================================================
+ * 
+ * Interfaccia per gestire i modelli LLM disponibili in Ollama.
+ * 
+ * FUNZIONALITÀ:
+ * - Visualizzazione catalogo modelli con stato reale
+ * - Download (pull) modelli con barra di progresso
+ * - Selezione modello attivo per RAG
+ * - Scaricamento modello dalla memoria (unload)
+ * - Verifica connettività Ollama
+ * 
+ * STATO MODELLI:
+ * - Non scaricato: disponibile per il download
+ * - Scaricato: file presente su disco
+ * - In linea: caricato in memoria (in uso)
+ * - Attivo: modello selezionato per la generazione
+ * 
+ * POLLING:
+ * - Aggiornamento catalogo ogni 6 secondi
+ * - Progresso download ogni 1.5 secondi
+ */
+
 import { useState, useEffect } from 'react'
 
 const POLL_MS = 6000

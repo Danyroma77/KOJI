@@ -1,6 +1,28 @@
 """
-Text Normalizer — Trasforma testo grezzo in Markdown uniforme.
-Rimuove noise, deduplica blocchi, gestisce tabelle.
+=============================================================================
+TEXT NORMALIZER — TRASFORMA TESTO GREZZO IN MARKDOWN UNIFORME
+=============================================================================
+
+Trasforma testo grezzo estratto dai parser in Markdown pulito e uniforme.
+Rimuove noise, deduplica blocchi, gestisce titoli e separatori di pagina.
+
+OPERAZIONI:
+1. Preserva separatori di pagina (placeholder unici)
+2. Normalizza spaziatura
+3. Rimuove header/footer ripetuti
+4. Rimuove numeri di pagina
+5. Rimuove watermark (BOZZA, CONFIDENZIALE, etc.)
+6. Pulizia e normalizzazione titoli Markdown
+7. Deduplicazione blocchi consecutivi
+8. Pulizia finale (righe vuote multiple, spazi)
+9. Ripristina separatori di pagina
+
+CONFIGURAZIONE:
+- remove_headers: rimuove intestazioni ripetute
+- remove_page_numbers: rimuove numeri di pagina isolati
+- remove_watermarks: rimuove marchi di classificazione
+- dedup_blocks: rimuove blocchi duplicati consecutivi
+- min_block_length: lunghezza minima blocco per dedup
 """
 
 from __future__ import annotations
@@ -10,7 +32,12 @@ from typing import Optional
 
 
 class TextNormalizer:
-    """Normalizza testo da qualsiasi sorgente in Markdown pulito."""
+    """
+    Normalizza testo da qualsiasi sorgente in Markdown pulito.
+    
+    Pipeline di normalizzazione multi-stage che trasforma testo grezzo
+    in Markdown strutturato e pulito, pronto per il chunking.
+    """
 
     def __init__(
         self,

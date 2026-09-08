@@ -1,3 +1,28 @@
+/**
+ * =============================================================================
+ * PAGINA ADMIN — CONFIGURAZIONE PIATTAFORMA
+ * =============================================================================
+ * 
+ * Interfaccia per configurare i parametri della piattaforma Koji.
+ * 
+ * SEZIONI CONFIGURABILI:
+ * - Elaborazione documenti: strategia chunking, dimensione, overlap
+ * - Modello di embedding: nome modello sentence-transformer
+ * - Indice vettoriale (HNSW): parametri M e ef_construction
+ * - Knowledge Graph: soglia confidence
+ * - RAG / Retrieval: soglia similarità minima
+ * - Monitoraggio: intervallo polling metriche
+ * 
+ * FUNZIONALITÀ:
+ * - Lettura configurazione attuale
+ * - Modifica parametri con validazione
+ * - Salvataggio su backend
+ * - Feedback visivo operazione riuscita
+ * 
+ * NOTA: Le modifiche ai parametri di chunking sono effettive immediatamente
+ * per i NUOVI documenti. I chunk già indicizzati non vengono ricreati.
+ */
+
 import { useState, useEffect } from 'react'
 
 const FIELDS = [
@@ -14,6 +39,7 @@ const FIELDS = [
   { key: 'hnsw_m', label: 'Parametro M (HNSW)', desc: 'Connessioni massime per nodo. Maggiore = piu preciso ma piu lento. Default: 16', min: 4, max: 64, step: 1, type: 'number' },
   { key: 'hnsw_ef_construction', label: 'ef_construction (HNSW)', desc: 'Candidate list durante costruzione. Default: 200', min: 50, max: 500, step: 10, type: 'number' },
   { key: 'graph_confidence_threshold', label: 'Soglia confidence (Grafo)', desc: 'Soglia minima per includere una relazione. Default: 0.7', min: 0, max: 1, step: 0.05, type: 'number' },
+  { key: 'rag_min_similarity_threshold', label: 'Soglia similarità minima (RAG)', desc: 'Filtra chunk con similarità inferiore (0-1). Default: 0 (disabilitato). Valori tipici: 0.3-0.5', min: 0, max: 1, step: 0.05, type: 'number' },
   { key: 'metrics_interval_sec', label: 'Intervallo polling (secondi)', desc: 'Frequenza aggiornamento metriche dashboard. Default: 5', min: 1, max: 60, step: 1, type: 'number' },
 ]
 
@@ -25,6 +51,7 @@ const SECTIONS = [
   { title: 'Modello di embedding', fields: ['embedding_model'] },
   { title: 'Indice vettoriale (HNSW)', fields: ['hnsw_m', 'hnsw_ef_construction'] },
   { title: 'Knowledge Graph', fields: ['graph_confidence_threshold'] },
+  { title: 'RAG / Retrieval', fields: ['rag_min_similarity_threshold'] },
   { title: 'Monitoraggio', fields: ['metrics_interval_sec'] },
 ]
 

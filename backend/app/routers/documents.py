@@ -1,6 +1,36 @@
 """
-Router Documenti — Upload, lista, delete, download.
-Gestisce l'intera pipeline di processing per ogni documento.
+=============================================================================
+ROUTER DOCUMENTI — UPLOAD, LISTA, DELETE, DOWNLOAD
+=============================================================================
+
+Questo router gestisce tutte le operazioni sui documenti della Knowledge Base:
+- Upload di nuovi documenti (con job in background)
+- Lista e filtraggio documenti
+- Download e visualizzazione contenuto
+- Eliminazione (con pulizia artefatti)
+- Reprocessing e rigenerazione wiki/grafo
+
+ENDPOINT PRINCIPALI:
+POST   /api/documents/upload          — Carica nuovi documenti
+GET    /api/documents                 — Lista documenti (con filtri)
+GET    /api/documents/{doc_id}        — Dettaglio singolo documento
+DELETE /api/documents/{doc_id}        — Elimina documento e artefatti
+GET    /api/documents/{doc_id}/download       — Download file originale
+GET    /api/documents/{doc_id}/content        — Contenuto testo normalizzato
+POST   /api/documents/{doc_id}/reprocess      — Rielabora documento
+POST   /api/documents/{doc_id}/regenerate-wiki — Rigenera wiki
+POST   /api/documents/{doc_id}/regenerate-graph — Rigenera grafo
+
+GESTIONE CATALOGO:
+- Il catalogo è un file JSON con metadati di ogni documento
+- Contiene: id, filename, formato, stato, metadati, timestamp
+- Viene letto/scritto da API e worker (processi separati)
+
+ARTEFATTI DOCUMENTO:
+- raw: file originale (non modificato)
+- processed: testo normalizzato in Markdown
+- vettori: embedding in ChromaDB
+- nodi/archi: entità nel Knowledge Graph
 """
 
 from __future__ import annotations
@@ -33,18 +63,40 @@ from app.services.activity_log import activity_log
 
 logger = logging.getLogger("koji")
 
+# Router con prefisso /api/documents
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
+# =============================================================================
+# FUNZIONI DI ACCESSO AL CATALOGO
+# =============================================================================
+# Il catalogo è un file JSON che contiene i metadati di tutti i documenti.
+# Viene condiviso tra API e worker (entrambi processi separati).
+
 def _load_catalog() -> dict:
-    """Carica il catalogo documenti dal disco."""
+    """
+    Carica il catalogo documenti dal disco.
+    
+    Returns:
+        Dict con chiave "documents" contenente la lista dei documenti.
+        Se il file non esiste, ritorna un catalogo vuoto.
+    """
     if settings.CATALOG_FILE.exists():
         return json.loads(settings.CATALOG_FILE.read_text(encoding="utf-8"))
     return {"documents": []}
 
 
 def _save_catalog(catalog: dict):
-    """Salva il catalogo documenti su disco."""
+    """
+    Salva il catalogo documenti su disco.
+    
+    Args:
+        catalog: Dict con i dati del catalogo da salvare
+        
+    Note:
+        - Crea la directory se non esiste
+        - Scrive in UTF-8 con indentazione per leggibilità
+    """
     settings.CATALOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     settings.CATALOG_FILE.write_text(
         json.dumps(catalog, ensure_ascii=False, indent=2),
@@ -53,7 +105,15 @@ def _save_catalog(catalog: dict):
 
 
 def _get_format(filename: str) -> DocumentFormat:
-    """Inferisce il formato dal nome file."""
+    """
+    Inferisce il formato del documento dall'estensione del file.
+    
+    Args:
+        filename: Nome del file con estensione
+        
+    Returns:
+        DocumentFormat corrispondente, o TEXT se sconosciuto
+    """
     ext = Path(filename).suffix.lower().replace(".", "")
     try:
         return DocumentFormat(ext)

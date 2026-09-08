@@ -1,18 +1,26 @@
 """
-Metrics Store — Registro runtime delle metriche della piattaforma (BE-RF-21).
+=============================================================================
+METRICS STORE — REGISTRO RUNTIME DELLE METRICHE DELLA PIATTAFORMA (BE-RF-21)
+=============================================================================
 
 Raccoglie in memoria gli eventi misurati dai servizi (RAG, ricerca, LLM,
 processing) e li espone in forma aggregata all'endpoint /api/monitoring/live.
 
-Le metriche sono *runtime*: non vengono persistite (a differenza dei risultati
-dei benchmark). Ogni misura chiusa viene inserita in un buffer circolare
-(maxlen) con un timestamp; gli aggregati (media, conteggi) sono calcolati
-al momento della lettura.
+CARATTERISTICHE:
+- Metriche runtime: non persistite (a differenza dei benchmark)
+- Buffer circolare (maxlen) con timestamp
+- Aggregati calcolati al momento della lettura (media, conteggi)
+- Thread-safe per accesso concorrente
 
-Classi di metriche:
-- LLM:     modello, token, ttft, durata, tok/s
-- RESI:    recupero (latency, numero risultati, dimensione indice)
-- PROCESS: durata per fase del processing documenti
+CLASSI DI METRICHE:
+- LLM: modello, token, TTFT, durata, tok/s
+- RETRIEVAL: latency, numero risultati, dimensione indice
+- PROCESSING: durata per fase del processing documenti
+
+USO:
+- Monitoraggio in tempo reale delle performance
+- Dashboard admin con statistiche aggregate
+- Identificazione bottleneck
 """
 
 from __future__ import annotations
@@ -25,15 +33,21 @@ from typing import Optional
 
 
 class _RingBuffer:
-    """Buffer circolare thread-safe con accesso agli aggregati."""
+    """
+    Buffer circolare thread-safe per memorizzare metriche.
+    
+    Mantiene solo gli ultimi N elementi (maxlen) per limitare uso memoria.
+    """
 
     def __init__(self, maxlen: int = 500):
         self._data: deque = deque(maxlen=maxlen)
 
     def push(self, item: dict):
+        """Aggiunge un elemento al buffer (thread-safe)."""
         self._data.append(item)
 
     def snapshot(self) -> list[dict]:
+        """Restituisce una copia dei dati correnti."""
         return list(self._data)
 
     def __len__(self):

@@ -1,6 +1,30 @@
 """
-Modelli Pydantic per validazione richiesta/risposta.
-Ogni router usa questi schemi per garantire coerenza.
+=============================================================================
+MODELLI PYDANTIC PER VALIDAZIONE RICHIESTA/RISPOSTA
+=============================================================================
+
+Questo modulo definisce tutti i modelli dati usati dall'API per:
+- Validazione automatica dei dati in ingresso/uscita
+- Serializzazione JSON
+- Documentazione OpenAPI generata automatica
+
+ORGANIZZAZIONE:
+1. Enumerazioni (stati, formati, azioni)
+2. Modelli documenti (catalogo, metadati, risposte)
+3. Modelli attività (cronologia KB)
+4. Modelli RAG (query, risposta, risultati)
+5. Modelli Knowledge Graph (nodi, archi, dettagli)
+6. Modelli Wiki (pagine, indice)
+7. Modelli Job (stato, progresso, risultati)
+8. Modelli ricerca (query, risultati)
+9. Modelli Benchmark (esperimenti, configurazione)
+10. Modelli amministrazione (configurazione, metriche)
+
+GARANZIE PYDANTIC:
+- Validazione tipo dato
+- Vincoli (min, max, regex)
+- Documentazione campi
+- Default values
 """
 
 from __future__ import annotations
@@ -10,19 +34,28 @@ from pydantic import BaseModel, Field
 from enum import Enum
 
 
-# === Enumerazioni ===
+# =============================================================================
+# ENUMERAZIONI
+# =============================================================================
 
 class DocumentStatus(str, Enum):
-    UPLOADED = "uploaded"
-    PARSING = "parsing"
-    NORMALIZING = "normalizing"
-    CHUNKING = "chunking"
-    EMBEDDING = "embedding"
-    READY = "ready"
-    ERROR = "error"
+    """
+    Stati del ciclo di vita di un documento nella pipeline di processing.
+    
+    Flusso normale: UPLOADED → PARSING → NORMALIZING → CHUNKING → EMBEDDING → READY
+    In caso di errore: qualsiasi stato → ERROR
+    """
+    UPLOADED = "uploaded"      # Caricato, in attesa di processing
+    PARSING = "parsing"        # Estrazione testo in corso
+    NORMALIZING = "normalizing"  # Normalizzazione testo in corso
+    CHUNKING = "chunking"      # Suddivisione in chunk
+    EMBEDDING = "embedding"    # Generazione embedding
+    READY = "ready"            # Indicizzato e disponibile
+    ERROR = "error"            # Errore durante il processing
 
 
 class DocumentFormat(str, Enum):
+    """Formati di documento supportati dalla piattaforma."""
     PDF = "pdf"
     DOCX = "docx"
     ODT = "odt"
@@ -306,6 +339,8 @@ class AdminConfigUpdate(BaseModel):
     rag_rerank_top_k: Optional[int] = Field(default=None, ge=1, le=100)
     rag_rerank_enabled: Optional[bool] = None
     rag_retrieval_mode: Optional[str] = None
+    # Soglia minima di similarità (0-1) per filtrare chunk non pertinenti
+    rag_min_similarity_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     rag_temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
     rag_max_tokens: Optional[int] = Field(default=None, ge=64, le=4096)
     # --- Upload ---

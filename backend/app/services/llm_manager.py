@@ -1,6 +1,27 @@
 """
-LLM Manager — Wrapper per Ollama REST API.
-Gestisce caricamento, scaricamento, generazione e switch dei modelli.
+=============================================================================
+LLM MANAGER — WRAPPER PER OLLAMA REST API
+=============================================================================
+
+Gestisce l'interazione con Ollama, il servizio che esegue modelli LLM
+localmente via Docker. Fornisce funzionalità per:
+- Caricamento/scaricamento modelli
+- Generazione testo (streaming e batch)
+- Switch tra modelli
+- Monitoraggio stato e progress download
+
+OLLAMA API:
+- GET  /api/tags     — Lista modelli installati
+- POST /api/pull     — Scarica modello (con streaming progresso)
+- POST /api/generate — Genera testo (con streaming token)
+- GET  /api/ps        — Modelli attualmente in memoria
+- POST /api/show      — Dettagli modello
+
+GESTIONE MODELLI:
+- Un solo modello attivo alla volta
+- Persistenza modello attivo su disco
+- Download asincrono con progresso
+- Keep-alive per evitare ricaricamenti
 """
 
 from __future__ import annotations
@@ -13,7 +34,12 @@ from app.config import settings
 
 
 class LLMManager:
-    """Gestore interazione con Ollama."""
+    """
+    Gestore interazione con Ollama.
+    
+    Fornisce metodi per caricare, scaricare, selezionare e utilizzare
+    modelli LLM tramite l'API REST di Ollama.
+    """
 
     def __init__(self, base_url: str = None):
         self.base_url = (base_url or settings.OLLAMA_BASE_URL).rstrip("/")
@@ -34,10 +60,16 @@ class LLMManager:
 
     @property
     def active_model(self) -> str:
+        """Modello attivo corrente (o default se non impostato)."""
         return self._active_model or settings.OLLAMA_MODEL
 
     def set_active_model(self, model: str):
-        """Imposta l'unico modello attivo e lo persiste su disco."""
+        """
+        Imposta l'unico modello attivo e lo persiste su disco.
+        
+        Args:
+            model: Nome del modello da attivare
+        """
         self._active_model = model
         try:
             active_file = settings.DATA_DIR / "active_model.json"
@@ -208,6 +240,9 @@ class LLMManager:
             }
         }
 
+        import logging
+        logger = logging.getLogger("koji")
+        
         async with httpx.AsyncClient(timeout=self._stream_timeout()) as client:
             async with client.stream(
                 "POST",
@@ -219,14 +254,18 @@ class LLMManager:
                     if not line.strip():
                         continue
                     try:
-                        import json
                         data = json.loads(line)
+                        # Log errori restituiti da Ollama
+                        if "error" in data:
+                            logger.error("Errore da Ollama: %s", data["error"])
+                            break
                         token = data.get("response", "")
                         if token:
                             yield token
                         if data.get("done", False):
                             break
                     except json.JSONDecodeError:
+                        logger.warning("Risposta non-JSON da Ollama: %s", line[:200])
                         continue
 
     async def pull_model(self, name: str) -> dict:

@@ -1,3 +1,26 @@
+/**
+ * =============================================================================
+ * PAGINA HOME — DASHBOARD PRINCIPALE
+ * =============================================================================
+ * 
+ * Pagina principale dell'applicazione con panoramica dello stato del sistema.
+ * 
+ * SEZIONI:
+ * - Stato servizi: verifica connettività Ollama, ChromaDB, File Store
+ * - Metriche sistema: CPU, RAM, chunk indicizzati, modello attivo
+ * - Attività recenti: cronologia operazioni sulla KB (ultimi 15 eventi)
+ * - Azioni rapide: pulsanti per navigare alle funzionalità principali
+ * 
+ * DATI:
+ * - Metriche da /api/system/metrics
+ * - Documenti da /api/documents
+ * - Attività da /api/documents/activities
+ * 
+ * POLLING:
+ * - Servizi: ogni 5 secondi
+ * - Metriche: ogni 5 secondi
+ */
+
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Upload, MessageSquare, Network, Database, Cpu, FileText, Clock } from 'lucide-react'

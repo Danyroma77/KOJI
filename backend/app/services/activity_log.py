@@ -1,13 +1,29 @@
 """
-Activity Log — registro persistente delle attività sulla Knowledge Base.
+=============================================================================
+ACTIVITY LOG — REGISTRO PERSISTENTE DELLE ATTIVITÀ SULLA KNOWLEDGE BASE
+=============================================================================
 
 Traccia gli eventi significativi del ciclo di vita dei documenti:
-upload, modifica (sovrascrittura di un file esistente), eliminazione
-ed esiti del processing (indicizzato / errore).
+upload, modifica, eliminazione ed esiti del processing (indicizzato/errore).
 
-Il log è un file JSON nel dataset (activities.json), thread-safe,
-con rotazione FIFO per evitare crescita illimitata. Stesso approccio
-della JobQueue: nessuna dipendenza esterna, sopravvive ai riavvii.
+CARATTERISTICHE:
+- File JSON nel dataset (activities.json)
+- Thread-safe con lock
+- Rotazione FIFO per evitare crescita illimitata (max 200 voci)
+- Nessuna dipendenza esterna, sopravvive ai riavvii
+
+EVENTI TRACCIATI:
+- UPLOADED: documento caricato
+- PARSING/NORMALIZING/CHUNKING/EMBEDDING: fasi processing
+- READY: indicizzato con successo
+- ERROR: errore durante processing
+- WIKI_GENERATED: wiki aggiornata
+- GRAPH_EXTRACTED: grafo aggiornato
+
+USO:
+- Logging operazioni significative nella KB
+- Cronologia per dashboard admin
+- Debug e auditing
 """
 
 from __future__ import annotations

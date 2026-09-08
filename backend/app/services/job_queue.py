@@ -1,6 +1,27 @@
 """
-Job Queue leggera — coda su filesystem, nessuna dipendenza esterna.
-I job sopravvivono a riavvii del container.
+=============================================================================
+JOB QUEUE LEGGERA — CODA SU FILESYSTEM, NESSUNA DIPENDENZA ESTERNA
+=============================================================================
+
+Implementa una coda di job persistente su filesystem che sopravvive a
+riavvii del container. Nessun database esterno necessario.
+
+CARATTERISTICHE:
+- Persistenza su file JSON (un file per job)
+- Thread-safe con lock
+- Sopravvive a riavvii di API e worker
+- Retry automatico dei job falliti
+- Tracciamento progresso e durata
+
+STATI JOB:
+- PENDING: in attesa di essere processato
+- RUNNING: in esecuzione dal worker
+- COMPLETED: terminato con successo
+- FAILED: terminato con errore
+
+USO:
+- API: enqueue() per creare job
+- Worker: dequeue() per prelevare job, complete()/fail() per aggiornare
 """
 
 import json
@@ -15,6 +36,7 @@ from app.config import settings
 
 
 class JobStatus(str, Enum):
+    """Stati possibili di un job."""
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -22,7 +44,12 @@ class JobStatus(str, Enum):
 
 
 class Job:
-    """Singolo job di processing."""
+    """
+    Singolo job di processing.
+    
+    Rappresenta un'unità di lavoro da eseguire nel worker.
+    Contiene tipo, payload, stato, progresso e risultato.
+    """
 
     def __init__(self, job_type, payload):
         self.id = str(uuid.uuid4())[:8]
@@ -37,6 +64,7 @@ class Job:
         self.result = None
 
     def to_dict(self):
+        """Serializza il job in dict per salvataggio su disco."""
         return {
             "id": self.id,
             "type": self.type,
@@ -53,7 +81,7 @@ class Job:
 
     @property
     def duration_s(self) -> float | None:
-        """Durata in secondi: determinata se esiste un timestamp di fine."""
+        """Calcola la durata in secondi (solo se completato)."""
         if self.completed_at and self.started_at:
             try:
                 from datetime import datetime
@@ -66,6 +94,7 @@ class Job:
 
     @classmethod
     def from_dict(cls, data):
+        """Deserializza un job da dict (caricamento da disco)."""
         job = cls(data["type"], data["payload"])
         job.id = data["id"]
         job.status = JobStatus(data["status"])
@@ -79,7 +108,12 @@ class Job:
 
 
 class JobQueue:
-    """Coda persistente su filesystem."""
+    """
+    Coda persistente su filesystem.
+    
+    Gestisce la creazione, prelievo e aggiornamento di job su disco.
+    Thread-safe per accesso concorrente da API e worker.
+    """
 
     def __init__(self):
         self.queue_dir = settings.DATA_DIR / "jobs"
@@ -87,11 +121,31 @@ class JobQueue:
         self._lock = threading.Lock()
 
     def enqueue(self, job_type, payload):
+        """
+        Crea e accoda un nuovo job.
+        
+        Args:
+            job_type: Tipo di job ("process_document", "generate_graph", etc.)
+            payload: Dati necessari per l'esecuzione
+            
+        Returns:
+            Job creato (con ID generato)
+        """
         job = Job(job_type, payload)
         self._save_job(job)
         return job
 
     def dequeue(self):
+        """
+        Preleva il prossimo job in coda (FIFO).
+        
+        Returns:
+            Job con stato RUNNING, o None se coda vuota
+            
+        Note:
+            - Thread-safe con lock
+            - Aggiorna stato a RUNNING e timestamp started_at
+        """
         with self._lock:
             jobs = self._list_jobs(status=JobStatus.PENDING)
             if not jobs:
@@ -103,6 +157,13 @@ class JobQueue:
             return job
 
     def complete(self, job_id, result=None):
+        """
+        Segna un job come completato.
+        
+        Args:
+            job_id: ID del job da completare
+            result: Risultato opzionale del processing
+        """
         job = self.get_job(job_id)
         if job:
             job.status = JobStatus.COMPLETED

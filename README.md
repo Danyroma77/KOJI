@@ -64,5 +64,4 @@ ambiente e metriche per la riproducibilità.
 
 ## ⚙️ Configurazione
 
-Le variabili d'ambiente (prefisso `KOJI_` in Docker, `KNOWLOCAL_` nel file `.env.example`)
-controllano chunking, embedding, retrieval e upload — vedi `.env.example` per tutti i parametri.
+Le variabili d'ambiente (prefisso `KOJI_`) controllano chunking, embedding, retrieval e upload — vedi `.env.example` per tutti i parametri.

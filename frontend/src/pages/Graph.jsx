@@ -1,3 +1,28 @@
+/**
+ * =============================================================================
+ * PAGINA GRAPH — KNOWLEDGE GRAPH INTERATTIVO
+ * =============================================================================
+ * 
+ * Visualizzazione interattiva del Knowledge Graph usando Cytoscape.js.
+ * 
+ * FUNZIONALITÀ:
+ * - Grafo interattivo con nodi (entità) e archi (relazioni)
+ * - Layout automatico (cose) con animazioni
+ * - Zoom, pan, selezione nodi
+ * - Ricerca nodi per nome
+ * - Filtro per tipo di entità
+ * - Dettagli nodo con storytelling e collegamenti
+ * - Evidenziazione connessioni del nodo selezionato
+ * 
+ * DATI:
+ * - Nodi: entità con label, tipo, grado
+ * - Archi: relazioni con label, confidence
+ * 
+ * COLORI:
+ * - Ogni tipo di entità ha un colore distinto (paletta)
+ * - Archi con trasparenza per evidenziare selezione
+ */
+
 import { useState, useEffect, useRef } from 'react'
 import cytoscape from 'cytoscape'
 import { Search, ZoomIn, ZoomOut, Maximize2, X, Network } from 'lucide-react'

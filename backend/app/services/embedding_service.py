@@ -1,6 +1,28 @@
 """
-Embedding Service — Genera embedding densi con sentence-transformers.
-Eseguito su CPU in batch con cache su disco.
+=============================================================================
+EMBEDDING SERVICE — GENERA EMBEDDING DENSI CON SENTENCE-TRANSFORMERS
+=============================================================================
+
+Questo servizio genera vettori densi (embedding) che rappresentano il
+significato semantico del testo. Usa sentence-transformers su CPU con
+cache su disco per evitare ricalcoli.
+
+CARATTERISTICHE:
+- Modello: all-MiniLM-L6-v2 (leggero, 80MB, 384 dimensioni)
+- Batch processing: elabora più testi insieme per efficienza
+- Cache su disco: evita di ricalcolare embedding già generati
+- Async support: esegue embedding in thread separato per non bloccare API
+
+FLUSSO:
+1. Controlla cache su disco (per chunk_id o hash del testo)
+2. Se cache miss, genera embedding con sentence-transformers
+3. Salva in cache per usi futuri
+4. Ritorna vettori normalizzati (norma L2 = 1)
+
+USO:
+- embed_texts: per batch di chunk (indicizzazione)
+- embed_query: per singola query (sincrono, uso interno)
+- embed_query_async: per query API (async, non blocca event loop)
 """
 
 from __future__ import annotations
@@ -15,7 +37,15 @@ from app.config import settings
 
 
 class EmbeddingService:
-    """Servizio per la generazione di embedding con cache su disco."""
+    """
+    Servizio per la generazione di embedding con cache su disco.
+    
+    Gestisce la generazione efficiente di vettori semantici con:
+    - Lazy loading del modello (caricato al primo uso)
+    - Cache su disco (evita ricalcoli)
+    - Supporto batch (elaborazione multipla)
+    - Async wrapper (non blocca l'event loop)
+    """
 
     def __init__(self):
         self._model = None
@@ -24,26 +54,37 @@ class EmbeddingService:
 
     @property
     def model(self):
-        """Lazy loading del modello — caricato solo al primo uso."""
+        """
+        Lazy loading del modello sentence-transformers.
+        
+        Il modello viene caricato solo al primo uso per risparmiare memoria.
+        Utilizza il modello configurato in settings.EMBEDDING_MODEL.
+        """
         if self._model is None:
             from sentence_transformers import SentenceTransformer
             self._model = SentenceTransformer(settings.EMBEDDING_MODEL)
         return self._model
 
     def embed_texts(self, texts: list[str], chunk_ids: list[str] = None) -> list[list[float]]:
-        """Genera embedding per una lista di testi.
-
+        """
+        Genera embedding per una lista di testi (BATCH).
+        
         Args:
             texts: Lista di testi da embeddare.
-            chunk_ids: ID dei chunk per la cache (opzionale).
-
+            chunk_ids: ID dei chunk per la cache (opzionale, stabile).
+            
         Returns:
             Lista di vettori densi (dimensione EMBEDDING_DIMENSION).
+            
+        Note:
+            - Usa chunk_id come chiave cache se disponibile
+            - Altrimenti usa hash MD5 del testo
+            - I vettori sono normalizzati (norma L2 = 1)
         """
         if not texts:
             return []
 
-        # Controlla cache
+        # Controlla cache per ogni testo
         results = [None] * len(texts)
         to_embed = []
         to_embed_indices = []
@@ -67,6 +108,7 @@ class EmbeddingService:
             )
             embeddings = embeddings.tolist()
 
+            # Salva in cache e aggiorna risultati
             for j, idx in enumerate(to_embed_indices):
                 results[idx] = embeddings[j]
                 cache_key = self._get_cache_key(
@@ -78,7 +120,19 @@ class EmbeddingService:
         return results
 
     def embed_query(self, query: str) -> list[float]:
-        """Genera embedding per una singola query (CHIAMATA BLOCCANTE)."""
+        """
+        Genera embedding per una singola query (CHIAMATA BLOCCANTE).
+        
+        Args:
+            query: Testo della query.
+            
+        Returns:
+            Vettore denso rappresentante la query.
+            
+        Warning:
+            Questa funzione è bloccante. Per uso in API async,
+            utilizzare embed_query_async().
+        """
         embedding = self.model.encode(
             [query],
             show_progress_bar=False,
@@ -87,14 +141,26 @@ class EmbeddingService:
         return embedding[0].tolist()
 
     async def embed_query_async(self, query: str) -> list[float]:
-        """Embedding di una query FUORI dall'event loop.
-
-        sentence-transformers gira su PyTorch/ONNX: il primo load può
-        scaricare i pesi da HuggingFace e l'encode è CPU-bound. Chiamato
-        in modo sincrono dentro un handler async congela l'event loop →
-        le risposte (SSE RAG comprese) non partono mai e il client resta
-        "bloccato". Qui l'encode gira in un thread con timeout esplicito:
-        in caso di problema l'errore arriva al client, non un silenzio.
+        """
+        Embedding di una query FUORI dall'event loop (ASINCRONO).
+        
+        Esegue l'embedding in un thread separato per non bloccare l'event
+        loop di FastAPI. Include timeout esplicito per evitare attese
+        infinite in caso di problemi.
+        
+        Args:
+            query: Testo della query.
+            
+        Returns:
+            Vettore denso rappresentante la query.
+            
+        Raises:
+            RuntimeError: Se l'embedding non completa entro il timeout.
+            
+        Note:
+            - sentence-transformers è CPU-bound e può essere lento
+            - Il primo caricamento può scaricare il modello da HuggingFace
+            - Il timeout di default è 30s (configurabile)
         """
         try:
             return await asyncio.wait_for(

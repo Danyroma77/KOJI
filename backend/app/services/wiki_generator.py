@@ -1,6 +1,28 @@
 """
-Wiki Generator — Genera pagine Markdown navigabili
-a partire dai documenti processati.
+=============================================================================
+WIKI GENERATOR — GENERA PAGINE MARKDOWN NAVIGABILI
+=============================================================================
+
+Genera pagine wiki semantiche a partire dai documenti processati della KB.
+Le pagine sono organizzate in un indice navigabile per categorie.
+
+STRUTTURA:
+- Indice: gruppi di pagine (Regolamenti, Circolari, Procedure, FAQ, Altro)
+- Pagine: contenuto Markdown con titolo, corpo e fonti
+- Generazione: aggregazione automatica da sezioni dei documenti
+
+GENERAZIONE:
+- Le pagine sono create dalle sezioni dei documenti (titoli H1-H6)
+- Il LLM può migliorare/introdurre le pagine (se disponibile)
+- L'indice è costruito automaticamente dai nomi dei file
+- Le pagine sono salvate come file Markdown (.md)
+
+CATEGORIE (euristica basata sul nome file):
+- Regolamenti: file con "regolament" nel nome
+- Circolari: file con "circolar" nel nome
+- Procedure: file con "procedur" o "manuale" nel nome
+- FAQ: file con "faq" nel nome
+- Altro: tutto il resto
 """
 
 from __future__ import annotations
@@ -13,7 +35,12 @@ from app.config import settings
 
 
 class WikiGenerator:
-    """Genera pagine wiki semantiche dai documenti della KB."""
+    """
+    Genera pagine wiki semantiche dai documenti della KB.
+    
+    Crea automaticamente pagine Markdown navigabili organizzate
+    in categorie, con contenuto aggregato dai documenti sorgente.
+    """
 
     def __init__(self):
         self.wiki_dir = settings.WIKI_DIR

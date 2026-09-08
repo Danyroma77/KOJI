@@ -1,3 +1,27 @@
+/**
+ * =============================================================================
+ * KOJI FRONTEND — APPLICAZIONE REACT PRINCIPALE
+ * =============================================================================
+ * 
+ * Questo file definisce il componente root dell'applicazione Koji.
+ * Utilizza React Router per la navigazione tra le diverse pagine.
+ * 
+ * STRUTTURA:
+ * - App: componente root con router e navbar
+ * - Navbar: barra di navigazione principale
+ * - Routes: definizione delle pagine disponibili
+ * 
+ * PAGINE DISPONIBILI:
+ * /       → Home (dashboard con metriche e attività)
+ * /rag    → RAG (interrogazione Knowledge Base)
+ * /graph  → Graph (Knowledge Graph interattivo)
+ * /wiki   → Wiki (pagine semantiche generate)
+ * /kb     → KB Manager (gestione documenti)
+ * /models → Modelli (gestione modelli LLM)
+ * /monitor→ Monitor (metriche di sistema)
+ * /admin  → Admin (configurazione piattaforma)
+ */
+
 import { Routes, Route } from 'react-router-dom'
 import Navbar from './components/Navbar'
 import Home from './pages/Home'
@@ -9,6 +33,14 @@ import Models from './pages/Models'
 import Monitor from './pages/Monitor'
 import Admin from './pages/Admin'
 
+/**
+ * Componente principale dell'applicazione.
+ * 
+ * Include:
+ * - Skip-link per accessibilità WCAG 2.4.1
+ * - Navbar per navigazione principale
+ * - Router per le diverse pagine
+ */
 export default function App() {
   return (
     <div className="app-shell">

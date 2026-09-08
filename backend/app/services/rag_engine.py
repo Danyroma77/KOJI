@@ -1,6 +1,34 @@
 """
-RAG Engine — Motore principale di interrogazione.
-Hybrid Retrieval → Re-ranking → Prompt assembly → LLM → Risposta con citazioni.
+=============================================================================
+RAG ENGINE — MOTORE PRINCIPALE DI INTERROGAZIONE
+=============================================================================
+
+Questo modulo implementa il motore RAG (Retrieval-Augmented Generation)
+che orchestra l'intero flusso di interrogazione della Knowledge Base.
+
+PIPELINE RAG:
+1. Embedding della query (vettore semantico)
+2. Retrieval chunk pertinenti (dense, BM25, o hybrid)
+3. Re-ranking con cross-encoder (opzionale)
+4. Filtraggio per soglia di similarità
+5. Assemblaggio prompt con contesto
+6. Streaming risposta da LLM (token per token)
+7. Calcolo metriche di performance
+
+CARATTERISTICHE:
+- Hybrid retrieval: combina ricerca vettoriale e lessicale
+- Re-ranking: migliora la pertinenza con cross-encoder
+- Streaming SSE: risposta in tempo reale
+- Metriche: tok/s, TTFT, latency, numero fonti
+- Gestione errori: fallback graceful, mai silenzio
+
+EVENTI SSE PRODOTTI:
+- "status": fase in corso (retrieval/generation)
+- "sources": fonti recuperate con punteggi
+- "token": singolo token generato
+- "metrics": metriche di prestazione
+- "error": messaggio d'errore
+- "done": fine generazione
 """
 
 from __future__ import annotations
@@ -22,22 +50,42 @@ from app.services.metrics_store import metrics_store
 
 @dataclass
 class RAGResult:
-    """Risultato completo di una query RAG."""
+    """
+    Risultato completo di una query RAG.
+    
+    Attributes:
+        answer: Testo della risposta generata
+        sources: Lista delle fonti utilizzate
+        metrics: Metriche di prestazione
+    """
     answer: str
     sources: list[dict]
     metrics: dict
 
 
-RAG_SYSTEM_PROMPT = """Sei un assistente specializzato nella consultazione di documenti amministrativi.
-Rispondi alla domanda dell'utente ESCLUSIVAMENTE basandoti sul contesto fornito.
+# =============================================================================
+# PROMPT TEMPLATE
+# =============================================================================
+# Il system prompt definisce il comportamento del LLM durante la generazione.
+# È progettato per:
+# - Citare le fonti con [N]
+# - Non inventare dati
+# - Rispondere in italiano
+# - Essere completo e strutturato
+
+RAG_SYSTEM_PROMPT = """Sei un assistente specializzato nella consultazione di documenti.
+Rispondi alla domanda dell'utente basandoti sul contesto fornito.
 Regole:
-- Se il contesto non contiene informazioni sufficienti, dichiara esplicitamente di non avere dati a disposizione.
-- Non inventare informazioni. Non fare inferenze non supportate dai documenti.
+- Usa le informazioni disponibili nel contesto per rispondere in modo utile e completo.
+- Se il contesto contiene informazioni parziali, rispondi con ciò che puoi dedurre dal testo, indicando che la risposta è basata su informazioni limitate.
+- Se il contesto è completamente irrilevante per la domanda, dichiara che non ci sono informazioni pertinenti disponibili.
+- Non inventare dati fattuali (nomi, date, numeri) che non sono nel contesto, ma puoi fare ragionamenti logici basati sui contenuti.
 - Cita le fonti usando il formato [N] dove N è il numero della fonte.
-- Rispondi in italiano, in modo chiaro e strutturato.
+- Rispondi in italiano, in modo chiaro e strutturato con una discorso completo e non riassuntivo.
 - Se ci sono dati numerici (date, importi, percentuali), riportali con precisione.
 """
 
+# Template per assemblare il contesto nel prompt
 RAG_CONTEXT_TEMPLATE = """CONTESTO:
 {chunks}
 
@@ -47,7 +95,17 @@ Risposta:"""
 
 
 class RAGEngine:
-    """Motore RAG con hybrid retrieval e re-ranking."""
+    """
+    Motore RAG con hybrid retrieval e re-ranking.
+    
+    Gestisce l'intero flusso di interrogazione:
+    - Generazione embedding della query
+    - Retrieval chunk pertinenti
+    - Re-ranking con cross-encoder
+    - Assemblaggio prompt
+    - Streaming risposta LLM
+    - Calcolo metriche
+    """
 
     def __init__(self):
         self._reranker = None
@@ -58,7 +116,12 @@ class RAGEngine:
 
     @property
     def reranker(self):
-        """Lazy loading del cross-encoder per re-ranking (solo cache locale)."""
+        """
+        Lazy loading del cross-encoder per re-ranking.
+        
+        Il modello viene caricato solo al primo uso per risparmiare memoria.
+        In caso di fallimento, il re-ranking viene disabilitato permanentemente.
+        """
         if self._reranker is None:
             from sentence_transformers import CrossEncoder
             self._reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
@@ -160,6 +223,18 @@ class RAGEngine:
             )
         m["candidates"] = len(results)
         m["retrieval_time_ms"] = round((time.time() - t_start) * 1000, 1)
+
+        # Filtraggio per soglia di similarità (solo per dense/hybrid).
+        # BM25 produce punteggi non normalizzati, quindi il filtro si applica
+        # solo quando è configurato e la modalità non è bm25.
+        threshold = settings.RAG_MIN_SIMILARITY_THRESHOLD
+        if threshold > 0 and mode != "bm25":
+            filtered = [r for r in results if r.get("score", 0) >= threshold]
+            logger.info(
+                "Filtraggio soglia similarità: %d chunk → %d chunk (threshold=%.2f)",
+                len(results), len(filtered), threshold
+            )
+            results = filtered
 
         # Re-ranking con cross-encoder "se configurato" (BE-RF-15, P1).
         # Fuori dall'event loop, con timeout e fallback: vedi _rerank.
@@ -366,16 +441,28 @@ class RAGEngine:
             context_parts.append(f"[{i}] {chunk['text']}")
         context = "\n\n---\n\n".join(context_parts)
         if not final_chunks:
-            # Prompt deterministico: senza documenti il modello non deve
-            # inventare nulla — dichiara apertamente la mancanza di dati.
+            # Prompt quando non ci sono chunk pertinenti: informa il modello
+            # che la ricerca non ha trovato risultati adatti.
             context = (
-                "[Nessun documento pertinente trovato per questa domanda: "
-                "dichiara di non avere dati a disposizione e NON inventare una risposta.]"
+                "[La ricerca nella Knowledge Base non ha trovato documenti pertinenti "
+                "per questa domanda specifica. Dichiara che non ci sono informazioni "
+                "disponibili su questo argomento nella base di conoscenza corrente.]"
             )
         prompt = RAG_SYSTEM_PROMPT + "\n\n" + RAG_CONTEXT_TEMPLATE.format(
             chunks=context,
             question=question,
         )
+
+        # Debug: log dettagliato del contesto inviato al LLM
+        logger.info("=== RAG DEBUG ===")
+        logger.info("Query: %s", question)
+        logger.info("Chunk recuperati: %d", len(final_chunks))
+        if final_chunks:
+            for i, chunk in enumerate(final_chunks, start=1):
+                score = chunk.get('score', 'N/A')
+                logger.info("  Chunk %d (score=%s): %s...", i, score, chunk['text'][:100])
+        logger.info("Contesto completo (primi 1000 char): %s", context[:1000])
+        logger.info("=== END RAG DEBUG ===")
 
         # Streaming generazione
         t_gen = time.time()

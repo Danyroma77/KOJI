@@ -1,13 +1,22 @@
 """
-Router Monitoring — Metriche live della piattaforma (BE-RF-21).
+=============================================================================
+ROUTER MONITORING — METRICHE LIVE DELLA PIATTAFORMA (BE-RF-21)
+=============================================================================
 
-GET /api/monitoring/live — snapshot corrente: metriche di sistema (CPU/RAM/VRAM),
-stato servizi, statistiche retrieval (latenza media, risultati, dimensione
-indice), metriche LLM (tok/s, first-token, durata), fasi del processing e
-conteggi dei job.
+Espone endpoint per ottenere metriche aggregate della piattaforma.
 
-Le metriche RAG/ricerca vengono accumulate a runtime dal MetricsStore;
-quelle di sistema vengono misurate al momento della richiesta.
+ENDPOINT:
+GET /api/monitoring/live    — Snapshot completo per dashboard
+GET /api/monitoring/metrics — Solo metriche di sistema (alias)
+
+METRICHE ESPOSTE:
+- Sistema: CPU, RAM, VRAM
+- Servizi: Ollama, ChromaDB, File Store
+- Retrieval: latenza media, numero risultati
+- LLM: tok/s, TTFT, durata
+- Processing: durata per fase
+- Job: conteggi per stato
+- Uptime: tempo dall'avvio
 """
 
 from __future__ import annotations
@@ -17,12 +26,27 @@ from fastapi import APIRouter
 from app.services.monitor import get_system_metrics, get_service_status
 from app.services.metrics_store import metrics_store
 
+# Router con prefisso /api/monitoring
 router = APIRouter(prefix="/monitoring", tags=["monitoring"])
 
 
 @router.get("/live")
 async def monitoring_live():
-    """Metriche correnti aggregate per la dashboard di monitoraggio."""
+    """
+    Metriche correnti aggregate per la dashboard di monitoraggio.
+    
+    Returns:
+        Dict con tutte le metriche della pittaforma
+        
+    Include:
+        - Metriche di sistema (CPU, RAM, VRAM)
+        - Stato servizi
+        - Statistiche retrieval
+        - Metriche LLM
+        - Tempi processing
+        - Conteggi job
+        - Uptime
+    """
     system_metrics = await get_system_metrics()
     services = await get_service_status()
 
@@ -46,5 +70,10 @@ async def monitoring_live():
 
 @router.get("/metrics")
 async def system_metrics_endpoint():
-    """Alias di /api/system/metrics per compatibilità della dashboard."""
+    """
+    Alias di /api/system/metrics per compatibilità della dashboard.
+    
+    Returns:
+        Solo metriche di sistema (CPU, RAM, VRAM, servizi)
+    """
     return await get_system_metrics()

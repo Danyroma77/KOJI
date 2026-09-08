@@ -1,5 +1,23 @@
 """
-Router Admin — Configurazione dei parametri della piattaforma.
+=============================================================================
+ROUTER ADMIN — CONFIGURAZIONE DEI PARAMETRI DELLA PIATTAFORMA
+=============================================================================
+
+Espone endpoint per leggere e aggiornare la configurazione della piattaforma.
+
+ENDPOINT:
+GET  /api/admin/config — Leggi configurazione attuale
+PUT  /api/admin/config — Aggiorna parametri configurazione
+
+PARAMETRI CONFIGURABILI:
+- Chunking: strategia, dimensione, overlap
+- Embedding: modello
+- RAG: top_k, temperature, max_tokens, retrieval_mode
+- Graph: confidence_threshold, require_grounding
+- Upload: dimensione massima
+
+NOTA: Le modifiche ai parametri di chunking sono effettive immediatamente
+per i NUOVI documenti. I chunk già indicizzati non vengono ricreati.
 """
 
 from __future__ import annotations
@@ -8,12 +26,18 @@ from fastapi import APIRouter
 from app.models import AdminConfigUpdate
 from app.config import settings
 
+# Router con prefisso /api/admin
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 @router.get("/config")
 async def get_config():
-    """Restituisce la configurazione attuale (esclusi segreti)."""
+    """
+    Restituisce la configurazione attuale (esclusi segreti).
+    
+    Returns:
+        Dict con tutti i parametri di configurazione
+    """
     return {
         "chunk_strategy": settings.CHUNK_STRATEGY,
         "chunk_size": settings.CHUNK_SIZE,
@@ -34,6 +58,7 @@ async def get_config():
         "rag_rerank_top_k": settings.RAG_RERANK_TOP_K,
         "rag_rerank_enabled": settings.RAG_RERANK_ENABLED,
         "rag_retrieval_mode": settings.RAG_RETRIEVAL_MODE,
+        "rag_min_similarity_threshold": settings.RAG_MIN_SIMILARITY_THRESHOLD,
         "rag_temperature": settings.RAG_TEMPERATURE,
         "rag_max_tokens": settings.RAG_MAX_TOKENS,
         "max_upload_size_mb": settings.MAX_UPLOAD_SIZE_MB,
@@ -42,12 +67,16 @@ async def get_config():
 
 @router.put("/config")
 async def update_config(update: AdminConfigUpdate):
-    """Aggiorna i parametri di configurazione.
-
-    Nota: i parametri di chunking (strategia, dimensione, overlap) sono
-    letti a ogni elaborazione — l'effetto è immediato per i NUOVI documenti.
-    I chunk già indicizzati non vengono ricreati: ri-processare i documenti
-    per rigenerarli con la nuova configurazione.
+    """
+    Aggiorna i parametri di configurazione.
+    
+    Args:
+        update: AdminConfigUpdate con i parametri da modificare
+        
+    Note:
+        - Le modifiche sono effettive immediatamente per i NUOVI documenti
+        - I chunk già indicizzati non vengono ricreati
+        - Per applicare le modifiche ai documenti esistenti: ri-processarli
     """
     if update.chunk_strategy is not None:
         settings.CHUNK_STRATEGY = settings.parse_chunk_strategy(update.chunk_strategy)
@@ -83,6 +112,8 @@ async def update_config(update: AdminConfigUpdate):
         settings.RAG_RERANK_ENABLED = update.rag_rerank_enabled
     if update.rag_retrieval_mode is not None:
         settings.RAG_RETRIEVAL_MODE = settings.parse_retrieval_mode(update.rag_retrieval_mode)
+    if update.rag_min_similarity_threshold is not None:
+        settings.RAG_MIN_SIMILARITY_THRESHOLD = update.rag_min_similarity_threshold
     if update.rag_temperature is not None:
         settings.RAG_TEMPERATURE = update.rag_temperature
     if update.rag_max_tokens is not None:

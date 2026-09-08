@@ -1,6 +1,22 @@
 /**
- * Servizio documenti — interfaccia reale con il backend.
- * Sostituisce l'uso dei mock data nel KB Manager.
+ * =============================================================================
+ * SERVIZIO DOCUMENTI — INTERFACCIA CON IL BACKEND PER GESTIONE DOCUMENTI
+ * =============================================================================
+ * 
+ * Fornisce funzioni per gestire i documenti nella Knowledge Base.
+ * Include upload, download, eliminazione, riprocessamento e cronologia.
+ * 
+ * ENDPOINT DISPONIBILI:
+ * - POST   /api/documents/upload              → Carica nuovi documenti
+ * - GET    /api/documents                     → Lista documenti
+ * - DELETE /api/documents/{id}                → Elimina documento
+ * - DELETE /api/documents/all                 → Svuota KB completa
+ * - GET    /api/documents/{id}/download       → Download file originale
+ * - GET    /api/documents/jobs                → Lista job di processing
+ * - POST   /api/documents/{id}/reprocess      → Riprocessa documento
+ * - POST   /api/documents/{id}/regenerate-wiki → Rigenera wiki
+ * - POST   /api/documents/{id}/regenerate-graph → Rigenera grafo
+ * - GET    /api/documents/activities          → Cronologia attività
  */
 
 const API_BASE = '/api/documents'

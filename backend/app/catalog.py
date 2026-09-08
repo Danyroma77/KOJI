@@ -1,15 +1,29 @@
 """
-Catalogo dei modelli messi a disposizione dalla piattaforma.
+=============================================================================
+CATALOGO DEI MODELLI LLM
+=============================================================================
 
-Contiene solo metadati *leggeri* (label, famiglia, descrizione, dimensione
-stimata) usati dalla pagina Modelli per mostrare i modelli offerti anche
-prima che vengano scaricati da Ollama. Quando il modello è già installato
-la dimensione/quantizzazione reali provengono da Ollama e sovrascrivono
-queste stime.
+Questo modulo contiene i metadati dei modelli LLM messi a disposizione 
+dalla piattaforma Koji. Questi dati sono usati dalla pagina "Modelli" 
+del frontend per mostrare le opzioni disponibili anche prima che i modelli 
+vengano scaricati da Ollama.
+
+STRUTTURA DEI METADATI:
+- label: nome visualizzato nell'interfaccia
+- family: famiglia del modello (es. "Meta Llama 3.2")
+- description: descrizione delle caratteristiche
+- size_bytes: dimensione stimata del file modello
+- quantization: tipo di quantizzazione (Q4_K_M è un buon compromesso qualità/dimensione)
+
+NOTE:
+- Le dimensioni sono stimate per la quantizzazione Q4_K_M
+- Quando un modello è installato, Ollama fornisce i dati reali che sovrascrivono queste stime
+- I modelli sono scelti per coprire diversi casi d'uso: leggeri (2B-3B) per hardware limitato, più grandi (7B) per qualità superiore
 """
 
 from __future__ import annotations
 
+# Catalogo dei modelli con metadati leggeri
 MODEL_CATALOG: dict[str, dict] = {
     "phi3:3.8b": {
         "label": "Phi-3 Mini (3.8B)",
@@ -50,5 +64,14 @@ MODEL_CATALOG: dict[str, dict] = {
 
 
 def get_model_metadata(name: str) -> dict:
-    """Ritorna i metadati del modello se presenti nel catalogo, altrimenti un dict vuoto."""
+    """
+    Recupera i metadati di un modello dal catalogo.
+    
+    Args:
+        name: Nome del modello (es. "phi3:3.8b")
+        
+    Returns:
+        Dict con i metadati del modello, o dict vuoto se non presente.
+        Restituisce una copia per evitare modifiche accidentali al catalogo.
+    """
     return dict(MODEL_CATALOG.get(name, {}) or {})

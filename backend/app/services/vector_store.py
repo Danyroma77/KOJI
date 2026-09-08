@@ -1,6 +1,29 @@
 """
-Vector Store — ChromaDB per ricerca densa + BM25 per ricerca keyword.
-Implementa Hybrid Retrieval con fusione RRF.
+=============================================================================
+VECTOR STORE — CHROMADB PER RICERCA DENSA + BM25 PER RICERCA KEYWORD
+=============================================================================
+
+Questo modulo implementa un vector store ibrido che combina:
+- Ricerca densa: HNSW (ChromaDB) per similarità semantica
+- Ricerca keyword: BM25 per corrispondenza lessicale
+- Hybrid: fusione RRF (Reciprocal Rank Fusion) dei due metodi
+
+ARCHITETTURA:
+- ChromaDB: database vettoriale persistente su disco
+- HNSW: indice gerarchico per ricerca approssimativa efficiente
+- BM25: indice lessicale costruito da ChromaDB
+- Fusione RRF: combina i ranking dei due metodi
+
+REFRESH MECHANISM:
+- API e worker sono processi separati
+- ChromaDB carica l'indice in memoria all'apertura
+- Le scritture di un processo non sono visibili all'altro senza refresh
+- Il refresh periodico (5s) rende visibili le scritture del worker all'API
+
+METODI DI RICERCA:
+- dense_search: ricerca vettoriale (embedding query + HNSW)
+- keyword_search: ricerca BM25 (tokenizzazione + scoring)
+- hybrid_search: fusione RRF di dense + keyword
 """
 
 from __future__ import annotations
@@ -21,7 +44,12 @@ logger = logging.getLogger("koji")
 
 
 class VectorStore:
-    """Vector store ibrido: HNSW (denso) + BM25 (keyword)."""
+    """
+    Vector store ibrido: HNSW (denso) + BM25 (keyword).
+    
+    Gestisce l'indicizzazione e la ricerca di chunk di testo nella
+    Knowledge Base con supporto per ricerca semantica e lessicale.
+    """
 
     def __init__(self):
         self._chroma = None
@@ -38,7 +66,16 @@ class VectorStore:
         self.REFRESH_INTERVAL = 5.0
 
     def initialize(self):
-        """Inizializza ChromaDB e carica lo stato persistente."""
+        """
+        Inizializza ChromaDB e carica lo stato persistente.
+        
+        Crea il client ChromaDB, ottiene/crea la collection, e ricostruisce
+        l'indice BM25 dai dati persistenti.
+        
+        Note:
+            - I parametri HNSW non vengono passati a ChromaDB >= 0.4.16
+              perché causano errori. Si usano i default della libreria.
+        """
         if self._initialized:
             return
 
@@ -203,10 +240,15 @@ class VectorStore:
         items = []
         if results and results["ids"] and results["ids"][0]:
             for i, id_ in enumerate(results["ids"][0]):
+                # Converti distanza in similarità, normalizzando tra 0 e 1.
+                # ChromaDB usa distanza coseno (0-2) o L2. La formula
+                # max(0, 1 - distance) garantisce un punteggio sempre valido.
+                distance = results["distances"][0][i]
+                similarity = max(0.0, 1.0 - distance)
                 items.append({
                     "id": id_,
                     "text": results["documents"][0][i],
-                    "score": 1 - results["distances"][0][i],  # Converti distanza in similarità
+                    "score": similarity,
                     "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
                 })
 

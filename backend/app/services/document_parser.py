@@ -1,7 +1,30 @@
 """
-Document Parser — Factory Pattern.
-Seleziona il parser corretto in base all'estensione del file.
-Ogni parser implementa l'interfaccia parse() → (testo, metadati).
+=============================================================================
+DOCUMENT PARSER — FACTORY PATTERN
+=============================================================================
+
+Implementa un parser factory che seleziona il parser corretto in base
+all'estensione del file. Ogni parser implementa l'interfaccia parse() → ParseResult.
+
+FORMATI SUPPORTATI:
+- PDF: PyMuPDF con fallback OCR per scansioni
+- DOCX: python-docx
+- ODT: estrazione XML content.xml
+- HTML: BeautifulSoup
+- Markdown: markdown library
+- Email: email.parser (EML)
+- Testo: decodifica UTF-8
+
+METADATI ESTRATTI:
+- Title: titolo del documento
+- Author: autore
+- Pages: numero pagine (PDF)
+- Language: lingua (default italiano)
+
+FACTORY PATTERN:
+- BaseParser: interfaccia astratta
+- Parser specifici: implementazioni per ogni formato
+- get_parser(): factory che restituisce il parser corretto
 """
 
 from __future__ import annotations
@@ -23,7 +46,12 @@ from app.config import settings
 
 
 class ParseResult:
-    """Risultato del parsing: testo grezzo + metadati strutturali."""
+    """
+    Risultato del parsing: testo grezzo + metadati strutturali.
+    
+    Contiene il testo estratto e i metadati che possono essere inferiti
+    dal contenuto o dai metadati del file.
+    """
 
     def __init__(self, text: str, title: Optional[str] = None,
                  author: Optional[str] = None, pages: Optional[int] = None,
@@ -36,16 +64,22 @@ class ParseResult:
 
 
 class BaseParser(ABC):
-    """Interfaccia base per tutti i parser."""
+    """
+    Interfaccia base per tutti i parser.
+    
+    Ogni parser deve implementare il metodo parse() che estrae testo
+    e metadati dal file.
+    """
 
     @abstractmethod
     def parse(self, file_bytes: bytes, filename: str) -> ParseResult:
-        """Estrae testo e metadati dal file.
-
+        """
+        Estrae testo e metadati dal file.
+        
         Args:
             file_bytes: Contenuto binario del file.
             filename: Nome originale del file (per inferire metadati).
-
+            
         Returns:
             ParseResult con testo e metadati.
         """
@@ -260,11 +294,14 @@ class ODTParser(BaseParser):
     """Parser per documenti ODT — estrazione XML content.xml."""
 
     def parse(self, file_bytes: bytes, filename: str) -> ParseResult:
-        try:
-            import zipfile
-            import xml.etree.ElementTree as ET
+        from io import BytesIO
+        import zipfile
+        import xml.etree.ElementTree as ET
+        import re
 
-            with zipfile.ZipFile(file_bytes) as zf:
+        def extract_text_from_odt(data: bytes) -> str:
+            """Estrae testo da un ODT valido."""
+            with zipfile.ZipFile(BytesIO(data)) as zf:
                 content_xml = zf.read("content.xml")
 
             root = ET.fromstring(content_xml)
@@ -273,28 +310,36 @@ class ODTParser(BaseParser):
 
             paragraphs = []
             for p in root.iter("{urn:oasis:names:tc:opendocument:xmlns:text:1.0}p"):
-                text = "".join(
-                    t.text or ""
-                    for t in p.iter("{urn:oasis:names:tc:opendocument:xmlns:text:1.0}span")
-                ) or p.text or ""
-                text = text.strip()
+                # Estrai tutto il testo del paragrafo usando itertext()
+                # che include sia text che tail degli elementi
+                text = "".join(p.itertext()).strip()
                 if text:
                     paragraphs.append(text)
 
+            return "\n\n".join(paragraphs)
+
+        try:
+            text = extract_text_from_odt(file_bytes)
             return ParseResult(
-                text="\n\n".join(paragraphs),
+                text=text,
                 title=Path(filename).stem,
             )
-        except Exception as e:
-            # Fallback: estrai testo grezzo dall'XML
-            import zipfile
-            with zipfile.ZipFile(file_bytes) as zf:
-                content_xml = zf.read("content.xml").decode("utf-8", errors="replace")
-            # Rimuovi tag XML, mantieni testo
-            import re
-            text = re.sub(r"<[^>]+>", " ", content_xml)
-            text = re.sub(r"\s+", " ", text).strip()
-            return ParseResult(text=text, title=Path(filename).stem)
+        except Exception:
+            # Fallback: tenta di estrarre testo grezzo dall'XML
+            try:
+                with zipfile.ZipFile(BytesIO(file_bytes)) as zf:
+                    # Cerca content.xml o qualsiasi file XML
+                    xml_files = [n for n in zf.namelist() if n.endswith(".xml")]
+                    if xml_files:
+                        content_xml = zf.read(xml_files[0]).decode("utf-8", errors="replace")
+                        # Rimuovi tag XML, mantieni testo
+                        text = re.sub(r"<[^>]+>", " ", content_xml)
+                        text = re.sub(r"\s+", " ", text).strip()
+                        return ParseResult(text=text, title=Path(filename).stem)
+            except Exception:
+                pass
+            # Fallback finale: restituisci testo vuoto
+            return ParseResult(text="", title=Path(filename).stem)
 
 
 # === Factory ===

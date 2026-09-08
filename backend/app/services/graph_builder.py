@@ -1,6 +1,32 @@
 """
-Graph Builder — Estrae entità e relazioni dai documenti
-tramite LLM locale, costruisce grafo NetworkX, serializza in JSON.
+=============================================================================
+GRAPH BUILDER — ESTRAE ENTITÀ E RELAZIONI DAI DOCUMENTI TRAMITE LLM
+=============================================================================
+
+Estrae entità e relazioni dai documenti tramite LLM locale, costruisce
+un grafo semantico e lo serializza in JSON per la visualizzazione.
+
+ESTRAZIONE:
+- Il LLM analizza il testo e identifica entità e relazioni
+- Le entità devono essere "grounded" (citazioni letterali nel testo)
+- Le relazioni descrivono connessioni esplicite tra entità
+- Confidence assegnata in base alla certezza dell'estrazione
+
+STRUTTURA GRAFO:
+- Nodi: entità con label, tipo, grado, documenti di origine
+- Archi: relazioni con label, confidence, documento di origine
+- Metadati: grounding (testo esatto), confidence, tipo entità
+
+VALIDAZIONE:
+- Etichette max 60 caratteri (evita frasi intere)
+- Entità devono essere nel testo originale (grounding)
+- Confidence minima configurabile (default 0.7)
+- Rimozione entità duplicate/simili (soglia 0.92)
+
+PERSISTENZA:
+- Grafo salvato in graph.json
+- Aggiornamento incrementale per documento
+- Rimozione selettiva per documento
 """
 
 from __future__ import annotations
@@ -13,6 +39,8 @@ from app.config import settings
 from app.services.llm_manager import llm_manager
 
 
+# Prompt per l'estrazione di entità e relazioni tramite LLM
+# Richiede citazioni letterali (grounding) e formato JSON strutturato
 GRAPH_EXTRACTION_PROMPT = """Analizza il TESTO ed estrai entità e relazioni tra loro.
 Restituisci SOLO un array JSON di oggetti con formato:
 [{{"subject": "...", "predicate": "...", "object": "...", "subject_type": "...", "object_type": "...", "confidence": 0.9}}]

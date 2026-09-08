@@ -1,6 +1,27 @@
 """
-Chunk Manager — Segmenta testo in chunk con overlap,
-rispettando i confini semantici di paragrafi e frasi.
+=============================================================================
+CHUNK MANAGER — SEGMENTA TESTO IN CHUNK CON OVERLAP
+=============================================================================
+
+Segmenta testo normalizzato in chunk configurabili, rispettando i confini
+semantici di paragrafi e frasi.
+
+STRATEGIE DI CHUNKING:
+- paragraph: confeziona paragrafi fino alla dimensione target (default)
+- section: un chunk per sezione Markdown (titoli H1-H6)
+- sentence: confeziona frasi complete fino alla dimensione target
+- fixed: finestra rigida di caratteri con overlap (nessun confine semantico)
+- page: un chunk per pagina del documento originale (solo PDF)
+
+CONFIGURAZIONE:
+- chunk_size: dimensione target in token (default 512)
+- overlap: sovrapposizione tra chunk consecutivi (percentuale)
+- Le impostazioni sono lette a ogni elaborazione (effetto immediato)
+
+OVERLAP:
+- I chunk consecutivi condividono una porzione di testo
+- Migliora la continuità semantica tra chunk
+- Percentuale configurabile (default 20%)
 """
 
 from __future__ import annotations
@@ -13,7 +34,17 @@ from app.config import settings
 
 @dataclass
 class Chunk:
-    """Singolo chunk di testo con metadati di posizione."""
+    """
+    Singolo chunk di testo con metadati di posizione.
+    
+    Attributes:
+        text: Contenuto testuale del chunk
+        index: Indice progressivo nel documento
+        start_char: Posizione iniziale nel testo originale
+        end_char: Posizione finale nel testo originale
+        doc_id: ID del documento di appartenenza
+        metadata: Metadati aggiuntivi
+    """
     text: str
     index: int
     start_char: int
@@ -28,7 +59,12 @@ class Chunk:
 
 
 class ChunkManager:
-    """Segmenta testo normalizzato in chunk configurabili."""
+    """
+    Segmenta testo normalizzato in chunk configurabili.
+    
+    Supporta multiple strategie di chunking e configurazione dinamica
+    tramite settings (nessun riavvio necessario).
+    """
 
     def __init__(
         self,
@@ -67,7 +103,15 @@ class ChunkManager:
 
     @classmethod
     def normalize_strategy(cls, value) -> str:
-        """Normalizza la strategia richiesta; valori ignoti -> paragraph."""
+        """
+        Normalizza la strategia di chunking (accetta alias italiani).
+        
+        Args:
+            value: Nome della strategia (può essere in italiano)
+            
+        Returns:
+            Nome normalizzato della strategia (default: "paragraph")
+        """
         if not isinstance(value, str) or not value.strip():
             return "paragraph"
         return cls.STRATEGY_ALIASES.get(value.strip().lower(), "paragraph")

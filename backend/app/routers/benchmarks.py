@@ -1,10 +1,24 @@
 """
-Router Benchmark — Esecuzione e consultazione di esperimenti (BE-RF-22).
+=============================================================================
+ROUTER BENCHMARK — ESECUZIONE E CONSULTAZIONE DI ESPERIMENTI (BE-RF-22)
+=============================================================================
 
-POST /api/benchmarks/run — avvia una run con configurazione data.
-GET  /api/benchmarks — elenco run (stato/risultati sintetici).
-GET  /api/benchmarks/{id} — stato/risultati completi di una run.
-DELETE /api/benchmarks/{id} — elimina una run (best-effort).
+Espose endpoint per gestire esperimenti benchmark riproducibili.
+
+ENDPOINT:
+POST   /api/benchmarks/run    — Avvia una run con configurazione data
+GET    /api/benchmarks        — Elenco run (stato/risultati sintetici)
+GET    /api/benchmarks/{id}   — Stato/risultati completi di una run
+DELETE /api/benchmarks/{id}   — Elimina una run (best-effort)
+
+ESPERIMENTI SUPPORTATI:
+- E1: Confronto LLM
+- E2: Quantizzazione
+- E3: Originale vs normalizzato
+- E4: BM25 vs Dense vs Hybrid
+- E5: LLM vs RAG
+- E6: KB / Wiki / Graph
+- E7: Scalabilità
 """
 
 from __future__ import annotations
@@ -20,6 +34,7 @@ from app.models import (
 )
 from app.services.benchmark import benchmark_service
 
+# Router con prefisso /api/benchmarks
 router = APIRouter(prefix="/benchmarks", tags=["benchmarks"])
 
 
