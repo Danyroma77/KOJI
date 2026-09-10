@@ -41,6 +41,7 @@ import os
 import logging
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Query
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -51,6 +52,8 @@ from app.models import (
     DocumentStatus, DocumentFormat, DocumentMetadata, DocumentTechMeta,
     ActivityAction, ActivityEntry, ActivityListResponse,
     DocumentMetadataUpdate,
+    ProcessingDetailResponse, ProcessingRunResponse,
+    ConfigurationSnapshotResponse,
 )
 from app.services.document_parser import parse_document, compute_sha256, get_parser
 from app.services.text_normalizer import normalizer
@@ -671,6 +674,66 @@ async def _regenerate_wiki(catalog: dict):
         wiki_generator.generate_all_sync(docs_for_wiki)
     else:
         wiki_generator.reset()
+
+@router.get("/{doc_id}/processing")
+async def get_document_processing(doc_id: str):
+    """Stato di processing di un documento con run corrente e cronologia.
+
+    Restituisce:
+    - current_run: ultimo ProcessingRun (o null se non presente)
+    - history: lista di tutti i ProcessingRun ordinati per started_at decrescente
+    """
+    from app.services.processing_tracker import processing_tracker
+    from app.services.config_snapshot import config_snapshot
+
+    catalog = _load_catalog()
+    doc_entry = next((d for d in catalog["documents"] if d["id"] == doc_id), None)
+    if not doc_entry:
+        raise HTTPException(status_code=404, detail=f"Documento {doc_id} non trovato")
+
+    current_run_raw = processing_tracker.get_current_run(doc_id)
+    history_raw = processing_tracker.get_runs_for_document(doc_id)
+
+    def _build_snapshot_model(snap_id: Optional[str]) -> Optional[ConfigurationSnapshotResponse]:
+        if not snap_id:
+            return None
+        snap = config_snapshot.get_snapshot(snap_id)
+        if not snap:
+            return None
+        return ConfigurationSnapshotResponse(
+            id=snap["id"],
+            document_id=snap.get("document_id", doc_id),
+            created_at=snap.get("created_at", ""),
+            configuration_hash=snap.get("configuration_hash", ""),
+            sections=snap.get("sections", {}),
+        )
+
+    def _build_run_model(run_raw: Optional[dict]) -> Optional[ProcessingRunResponse]:
+        if not run_raw:
+            return None
+        snap_id = run_raw.get("snapshot_id")
+        return ProcessingRunResponse(
+            id=run_raw["id"],
+            run_type=run_raw.get("run_type", "initial"),
+            status=run_raw.get("status", "pending"),
+            current_stage=run_raw.get("current_stage"),
+            started_at=run_raw.get("started_at"),
+            completed_at=run_raw.get("completed_at"),
+            duration_ms=run_raw.get("duration_ms"),
+            configuration_snapshot=_build_snapshot_model(snap_id),
+            stages=run_raw.get("stages", {}),
+            error=run_raw.get("error"),
+        )
+
+    current_run = _build_run_model(current_run_raw)
+    history = [_build_run_model(r) for r in history_raw]
+
+    return ProcessingDetailResponse(
+        document_id=doc_id,
+        current_run=current_run,
+        history=history,
+    )
+
 
 @router.get("/jobs")
 async def list_jobs(status: str = None):

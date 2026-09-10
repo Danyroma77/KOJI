@@ -306,7 +306,7 @@ class SystemMetrics(BaseModel):
     file_store_ready: bool
     total_documents: int
     total_chunks: int
-    active_model: str
+    active_model: Optional[str] = None
 
 
 class ServiceStatusResponse(BaseModel):
@@ -475,3 +475,46 @@ class JobDetail(BaseModel):
     progress: float = 0.0
     result: Optional[dict] = None
     payload: Optional[dict] = None
+
+
+# === Processing Tracker (FASE 1B) ===
+
+class ProcessingStageResponse(BaseModel):
+    """Stato di una singola fase di processing."""
+    stage: str
+    status: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    duration_ms: Optional[int] = None
+    error_message: Optional[str] = None
+    counters: dict = Field(default_factory=dict)
+
+
+class ConfigurationSnapshotResponse(BaseModel):
+    """Snapshot immutabile della configurazione utilizzata da un ProcessingRun."""
+    id: str
+    document_id: str
+    created_at: str
+    configuration_hash: str
+    sections: dict
+
+
+class ProcessingRunResponse(BaseModel):
+    """Un ProcessingRun con tutte le sue fasi."""
+    id: str
+    run_type: str
+    status: str
+    current_stage: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    duration_ms: Optional[int] = None
+    configuration_snapshot: Optional[ConfigurationSnapshotResponse] = None
+    stages: dict = Field(default_factory=dict)
+    error: Optional[str] = None
+
+
+class ProcessingDetailResponse(BaseModel):
+    """Risposta completa per GET /api/documents/{id}/processing."""
+    document_id: str
+    current_run: Optional[ProcessingRunResponse] = None
+    history: list[ProcessingRunResponse] = Field(default_factory=list)

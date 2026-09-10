@@ -65,14 +65,20 @@ signal.signal(signal.SIGINT, signal_handler)
 def process_document_job(job):
     """
     Esegue il processing completo di un documento nella pipeline.
-    
-    PIPELINE (5 fasi sequenziali):
-    1. Parsing: estrazione testo grezzo dal file (PDF, DOCX, etc.)
-    2. Normalizzazione: pulizia e conversione in Markdown uniforme
-    3. Chunking: suddivisione in segmenti per l'indicizzazione
-    4. Embedding: generazione vettori semantici per ogni chunk
-    5. Indicizzazione: salvataggio in ChromaDB per la ricerca
-    
+
+    PIPELINE (8 fasi sequenziali tracciate dal ProcessingTracker):
+    1. PARSING: estrazione testo grezzo dal file (PDF, DOCX, etc.)
+    2. NORMALIZATION: pulizia e conversione in Markdown uniforme
+    3. CHUNKING: suddivisione in segmenti per l'indicizzazione
+    4. EMBEDDING: generazione vettori semantici per ogni chunk
+    5. VECTOR_INDEX: indicizzazione in ChromaDB
+    6. BM25: costruzione indice lessicale
+    7. WIKI: generazione pagine wiki semantiche
+    8. GRAPH: estrazione entità/relazioni (job separato)
+
+    Ogni fase è tracciata con start_stage/complete_stage/fail_stage.
+    La configurazione viene snapshotata all'inizio del processing.
+
     Args:
         job: Oggetto Job con payload {doc_id, filename, raw_path}
         
@@ -82,10 +88,11 @@ def process_document_job(job):
     Note:
         - Il documento può essere stato eliminato mentre era in coda:
           in tal caso salta il processing senza errori
-        - Ogni fase viene misurata per le metriche di performance
+        - Ogni fase viene tracciata dal ProcessingTracker
+        - La configurazione viene snapshotata all'inizio del processing
         - In caso di errore, il documento viene marcato come ERROR
     """
-    # Import locali per evitare dipenze circolari
+    # Import locali per evitare dipendenze circolari
     from app.services.document_parser import parse_document, compute_sha256
     from app.services.text_normalizer import normalizer
     from app.services.chunk_manager import chunk_manager
@@ -93,6 +100,13 @@ def process_document_job(job):
     from app.services.vector_store import vector_store
     from app.services.job_queue import job_queue
     from app.services.activity_log import activity_log
+    from app.services.processing_tracker import (
+        processing_tracker,
+        StageType,
+        RunType,
+    )
+    from app.services.config_snapshot import config_snapshot
+    from app.services.wiki_generator import wiki_generator
     from app.config import settings
     from app.routers.documents import _load_catalog, _save_catalog, _get_format
     from app.models import DocumentStatus, DocumentTechMeta, DocumentMetadata, ActivityAction
@@ -114,13 +128,6 @@ def process_document_job(job):
         logger.info("[%s] SALTATO: %s eliminato prima del processing", job.id, filename)
         return {"skipped": True, "filename": filename}
 
-    # Numero totale di fasi per il calcolo del progresso
-    total_steps = 5
-
-    def update_progress(step, sub=0):
-        """Aggiorna il progresso del job (0.0 - 1.0)."""
-        job_queue.update_progress(job.id, (step + sub * 0.2) / total_steps)
-
     # Percorso dove salvare il testo normalizzato
     processed_path = settings.PROCESSED_DIR / f"{doc_id}.md"
 
@@ -140,10 +147,30 @@ def process_document_job(job):
         _save_catalog(catalog)
 
     # =========================================================================
-    # FASE 1 — PARSING + NORMALIZZAZIONE + METADATI
+    # FASE 0 — CREAZIONE ProcessingRun E ConfigurationSnapshot
     # =========================================================================
-    # Queste operazioni sono sequenziali perché ogni fase produce l'input
-    # per la successiva. Un errore qui rende impossibile tutto il resto.
+    # Crea uno snapshot immutabile della configurazione corrente
+    snapshot = config_snapshot.create_snapshot(doc_id)
+    snapshot_id = snapshot["id"]
+    logger.info("[%s] ConfigurationSnapshot creato: %s", job.id, snapshot_id)
+
+    # Crea il ProcessingRun associato allo snapshot
+    existing_runs = processing_tracker.get_runs_for_document(doc_id)
+    run = processing_tracker.create_run(
+        doc_id,
+        run_type=RunType.INITIAL,
+        snapshot_id=snapshot_id,
+        existing_runs=existing_runs,
+    )
+    run_id = run["id"]
+    logger.info("[%s] ProcessingRun %s creato per %s", job.id, run_id, filename)
+
+    # =========================================================================
+    # FASE 1 — PARSING
+    # =========================================================================
+    processing_tracker.start_stage(run_id, doc_id, StageType.PARSING)
+    parse_result = None
+    normalized_text = None
     try:
         logger.info("[%s] Parsing: %s", job.id, filename)
         t_phase = time.time()
@@ -153,8 +180,22 @@ def process_document_job(job):
             doc_id=doc_id, phase="parse",
             duration_s=time.time() - t_phase, filename=filename,
         )
-        update_progress(1)
+        processing_tracker.complete_stage(
+            run_id, doc_id, StageType.PARSING,
+            counters={"chars_parsed": len(parse_result.text)}
+        )
+        logger.info("[%s] PARSING completato: %d caratteri", job.id, len(parse_result.text))
+    except Exception as e:
+        processing_tracker.fail_stage(run_id, doc_id, StageType.PARSING, str(e))
+        _mark_doc_error(str(e))
+        activity_log.log(ActivityAction.ERROR, filename, doc_id, detail=str(e)[:80])
+        raise
 
+    # =========================================================================
+    # FASE 2 — NORMALIZATION
+    # =========================================================================
+    processing_tracker.start_stage(run_id, doc_id, StageType.NORMALIZATION)
+    try:
         logger.info("[%s] Normalizzazione", job.id)
         t_phase = time.time()
         normalized_text = normalizer.normalize(parse_result.text)
@@ -163,42 +204,46 @@ def process_document_job(job):
             doc_id=doc_id, phase="normalize",
             duration_s=time.time() - t_phase, filename=filename,
         )
-        update_progress(2)
-
-        logger.info("[%s] Metadati", job.id)
-        sha256 = compute_sha256(file_bytes)
-        tech_meta = DocumentTechMeta(
-            sha256=sha256,
-            size_bytes=len(file_bytes),
-            # Usa l'enum DocumentFormat: una stringa tipo 'MD' verrebbe
-            # rifiutata dalla validazione pydantic e fallirebbe tutto il job.
-            format=_get_format(filename),
-            upload_timestamp=datetime.now().isoformat(),
+        processing_tracker.complete_stage(
+            run_id, doc_id, StageType.NORMALIZATION,
+            counters={"chars_normalized": len(normalized_text)}
         )
-        struct_meta = DocumentMetadata(
-            title=parse_result.title,
-            author=parse_result.author,
-            pages=parse_result.pages,
-        )
-        for doc in catalog["documents"]:
-            if doc["id"] == doc_id:
-                doc["metadata_structural"] = struct_meta.model_dump()
-                doc["metadata_tech"] = tech_meta.model_dump()
-                break
-        _save_catalog(catalog)
-        update_progress(3)
-
+        logger.info("[%s] NORMALIZATION completata: %d caratteri", job.id, len(normalized_text))
     except Exception as e:
-        logger.error("[%s] FALLITO (parsing/normalizzazione): %s — %s", job.id, filename, e)
+        processing_tracker.fail_stage(run_id, doc_id, StageType.NORMALIZATION, str(e))
         _mark_doc_error(str(e))
         activity_log.log(ActivityAction.ERROR, filename, doc_id, detail=str(e)[:80])
         raise
 
-    # ============ FASE 2 — Chunking + Embedding + Indicizzazione ============
-    # Isolata dalla fase 1: se fallisce il testo normalizzato esiste comunque,
-    # quindi wiki e grafo (che dipendono solo da quello) restano possibili.
-    indexing_error = None
-    chunks_count = None
+    # =========================================================================
+    # Metadati documento (aggiornamento catalogo)
+    # =========================================================================
+    logger.info("[%s] Metadati", job.id)
+    sha256 = compute_sha256(file_bytes)
+    tech_meta = DocumentTechMeta(
+        sha256=sha256,
+        size_bytes=len(file_bytes),
+        format=_get_format(filename),
+        upload_timestamp=datetime.now().isoformat(),
+    )
+    struct_meta = DocumentMetadata(
+        title=parse_result.title,
+        author=parse_result.author,
+        pages=parse_result.pages,
+    )
+    for doc in catalog["documents"]:
+        if doc["id"] == doc_id:
+            doc["metadata_structural"] = struct_meta.model_dump()
+            doc["metadata_tech"] = tech_meta.model_dump()
+            break
+    _save_catalog(catalog)
+
+    # =========================================================================
+    # FASE 3 — CHUNKING
+    # =========================================================================
+    processing_tracker.start_stage(run_id, doc_id, StageType.CHUNKING)
+    chunks = []
+    chunks_count = 0
     try:
         logger.info("[%s] Chunking", job.id)
         t_phase = time.time()
@@ -208,13 +253,49 @@ def process_document_job(job):
             doc_id=doc_id, phase="chunk",
             duration_s=time.time() - t_phase, filename=filename,
         )
-        update_progress(4)
+        processing_tracker.complete_stage(
+            run_id, doc_id, StageType.CHUNKING,
+            counters={"chunks_created": chunks_count}
+        )
+        logger.info("[%s] CHUNKING completato: %d chunk", job.id, chunks_count)
+    except Exception as e:
+        processing_tracker.fail_stage(run_id, doc_id, StageType.CHUNKING, str(e))
+        _mark_doc_error(str(e))
+        activity_log.log(ActivityAction.ERROR, filename, doc_id, detail=str(e)[:80])
+        raise
 
+    # =========================================================================
+    # FASE 4 — EMBEDDING
+    # =========================================================================
+    processing_tracker.start_stage(run_id, doc_id, StageType.EMBEDDING)
+    embeddings = []
+    try:
         logger.info("[%s] Embedding %d chunk", job.id, len(chunks))
         t_phase = time.time()
         chunk_ids = [f"{c.doc_id}_{c.index}" for c in chunks]
         embeddings = embedding_service.embed_texts([c.text for c in chunks], chunk_ids)
+        metrics_store.record_processing(
+            doc_id=doc_id, phase="embed",
+            duration_s=time.time() - t_phase, filename=filename,
+        )
+        processing_tracker.complete_stage(
+            run_id, doc_id, StageType.EMBEDDING,
+            counters={"embeddings_created": len(embeddings)}
+        )
+        logger.info("[%s] EMBEDDING completato: %d vettori", job.id, len(embeddings))
+    except Exception as e:
+        processing_tracker.fail_stage(run_id, doc_id, StageType.EMBEDDING, str(e))
+        _mark_doc_error(str(e))
+        activity_log.log(ActivityAction.ERROR, filename, doc_id, detail=str(e)[:80])
+        raise
 
+    # =========================================================================
+    # FASE 5 — VECTOR_INDEX
+    # =========================================================================
+    processing_tracker.start_stage(run_id, doc_id, StageType.VECTOR_INDEX)
+    try:
+        logger.info("[%s] Indicizzazione vettoriale", job.id)
+        t_phase = time.time()
         metadatas = [{
             "doc_id": c.doc_id,
             "chunk_index": c.index,
@@ -223,63 +304,210 @@ def process_document_job(job):
             "start_char": c.start_char,
             "end_char": c.end_char,
         } for c in chunks]
-
         vector_store.add_chunks(chunks, embeddings, metadatas)
         metrics_store.record_processing(
-            doc_id=doc_id, phase="embed_index",
+            doc_id=doc_id, phase="index",
             duration_s=time.time() - t_phase, filename=filename,
         )
-        update_progress(5)
-
-        for doc in catalog["documents"]:
-            if doc["id"] == doc_id:
-                doc["chunks_count"] = len(chunks)
-                doc["chunk_strategy"] = settings.CHUNK_STRATEGY
-                doc["status"] = DocumentStatus.READY.value
-                doc["error_message"] = None
-                doc["updated_at"] = datetime.now().isoformat()
-                break
-        _save_catalog(catalog)
-
-        activity_log.log(
-            ActivityAction.READY, filename, doc_id,
-            detail=f"{len(chunks)} chunk",
+        processing_tracker.complete_stage(
+            run_id, doc_id, StageType.VECTOR_INDEX,
+            counters={"vectors_indexed": len(chunks)}
         )
-        logger.info("[%s] INDICIZZATO: %s -> %d chunk", job.id, filename, len(chunks))
-
+        logger.info("[%s] VECTOR_INDEX completato: %d vettori", job.id, len(chunks))
     except Exception as e:
-        indexing_error = str(e)
-        logger.error("[%s] FALLITO (indicizzazione): %s — %s", job.id, filename, e)
-        _mark_doc_error(indexing_error)
-        activity_log.log(ActivityAction.ERROR, filename, doc_id, detail=indexing_error[:80])
-        # NON raise: i job downstream vengono comunque accodati qui sotto
+        processing_tracker.fail_stage(run_id, doc_id, StageType.VECTOR_INDEX, str(e))
+        _mark_doc_error(str(e))
+        activity_log.log(ActivityAction.ERROR, filename, doc_id, detail=str(e)[:80])
+        raise
 
-    # ==== FASE 3 — Artefatti derivati: WIKI PRIMA, GRAFO DOPO ====
-    # Dopo l'indicizzazione viene accodata SOLO la wiki. Il grafo del
-    # documento parte solo al COMPLETAMENTO della wiki (catena gestita in
-    # generate_wiki_job): la sequenza è deterministicamente wiki → grafo,
-    # mai in parallelo. Se la wiki fallisce il grafo non parte (requisito
-    # pipeline: carica → chunk → wiki → grafo).
-    downstream = 0
-    if processed_path.exists():
-        # Ripulisce residui pendenti di tentativi precedenti (es. dopo un
-        # retry di un job fallito) per evitare esecuzioni doppie.
-        job_queue.cancel_pending_for_doc(
-            doc_id, reason="Annullato: sostituito dal nuovo processing del documento"
+    # =========================================================================
+    # FASE 6 — BM25
+    # =========================================================================
+    processing_tracker.start_stage(run_id, doc_id, StageType.BM25)
+    try:
+        logger.info("[%s] Ricostruzione BM25", job.id)
+        t_phase = time.time()
+        # Forza il refresh di BM25 per includere i nuovi chunk
+        vector_store._maybe_refresh()
+        # Conta i documenti unici indicizzati in BM25
+        unique_docs = len(set(c.doc_id for c in chunks))
+        metrics_store.record_processing(
+            doc_id=doc_id, phase="bm25",
+            duration_s=time.time() - t_phase, filename=filename,
         )
-        job_queue.enqueue("generate_wiki", {
-            "doc_id": doc_id,
-            "filename": filename,
-            "chain_graph": True,   # il grafo verrà accodato dopo la wiki
-        })
-        downstream = 1
-        logger.info("[%s] Accodata wiki per %s (il grafo partirà al completamento)", job.id, filename)
+        processing_tracker.complete_stage(
+            run_id, doc_id, StageType.BM25,
+            counters={"documents_indexed": unique_docs}
+        )
+        logger.info("[%s] BM25 completato: %d documenti indicizzati", job.id, unique_docs)
+    except Exception as e:
+        processing_tracker.fail_stage(run_id, doc_id, StageType.BM25, str(e))
+        _mark_doc_error(str(e))
+        activity_log.log(ActivityAction.ERROR, filename, doc_id, detail=str(e)[:80])
+        raise
 
-    if indexing_error:
-        # Il job fallisce per tracciabilità, ma la wiki è già in coda
-        raise RuntimeError(indexing_error)
+    # =========================================================================
+    # FASE 7 — WIKI
+    # =========================================================================
+    processing_tracker.start_stage(run_id, doc_id, StageType.WIKI)
+    try:
+        logger.info("[%s] Job WIKI (esecuzione sincrona)", job.id)
+        t_phase = time.time()
 
-    return {"chunks": chunks_count, "filename": filename, "downstream_jobs": downstream}
+        # Costruisce lista documenti per la wiki: il documento corrente più
+        # tutti i documenti già pronti con il file normalizzato.
+        docs_for_wiki: list[dict] = []
+
+        # Il documento in elaborazione non è ancora "READY" nel catalogo,
+        # ma se il file normalizzato esiste lo includiamo comunque.
+        if processed_path.exists():
+            meta = None
+            for d in catalog["documents"]:
+                if d["id"] == doc_id:
+                    meta = d.get("metadata_structural")
+                    break
+            docs_for_wiki.append({
+                "id": doc_id,
+                "filename": filename,
+                "processed_text": processed_path.read_text(encoding="utf-8"),
+                "metadata": (meta if isinstance(meta, dict) else {}) or {},
+            })
+
+        # Documenti già pronti (escludendo il corrente, già aggiunto sopra).
+        for d in catalog["documents"]:
+            if d["id"] == doc_id:
+                continue
+            if d.get("status") != DocumentStatus.READY.value:
+                continue
+            p = settings.PROCESSED_DIR / f"{d['id']}.md"
+            if not p.exists():
+                continue
+            meta = d.get("metadata_structural")
+            docs_for_wiki.append({
+                "id": d["id"],
+                "filename": d["filename"],
+                "processed_text": p.read_text(encoding="utf-8"),
+                "metadata": (meta if isinstance(meta, dict) else {}) or {},
+            })
+
+        # Conteggio pagine wiki prima della generazione.
+        index_before = wiki_generator.get_index()
+        pages_before = sum(len(g.get("items", [])) for g in index_before.get("groups", []))
+
+        # Genera wiki (sincrono) — rigenera l'intera wiki con tutti i docs.
+        wiki_result = wiki_generator.generate_all_sync(docs_for_wiki)
+
+        # Conteggio pagine wiki dopo.
+        index_after = wiki_generator.get_index()
+        pages_after = sum(len(g.get("items", [])) for g in index_after.get("groups", []))
+
+        wiki_count = pages_after - pages_before
+        if wiki_count < 0:
+            wiki_count = pages_after
+
+        metrics_store.record_processing(
+            doc_id=doc_id, phase="wiki",
+            duration_s=time.time() - t_phase, filename=filename,
+        )
+        processing_tracker.complete_stage(
+            run_id, doc_id, StageType.WIKI,
+            counters={"pages_created": wiki_count}
+        )
+        logger.info("[%s] WIKI completato: %d pagine", job.id, wiki_count)
+    except Exception as e:
+        processing_tracker.fail_stage(run_id, doc_id, StageType.WIKI, str(e))
+        _mark_doc_error(str(e))
+        activity_log.log(ActivityAction.ERROR, filename, doc_id, detail=str(e)[:80])
+        raise
+
+    # =========================================================================
+    # FASE 8 — GRAPH
+    # =========================================================================
+    processing_tracker.start_stage(run_id, doc_id, StageType.GRAPH)
+    try:
+        logger.info("[%s] Job GRAPH (esecuzione sincrona)", job.id)
+        t_phase = time.time()
+
+        # Conteggio entità/relazioni prima dell'estrazione.
+        graph_before = graph_builder.get_graph()
+        nodes_before = len(graph_before.get("nodes", []))
+        edges_before = len(graph_before.get("edges", []))
+
+        # Legge il testo normalizzato.
+        processed_text = ""
+        if processed_path.exists():
+            processed_text = processed_path.read_text(encoding="utf-8")
+
+        # Ottiene il titolo dai metadati (o dal filename come fallback).
+        title = filename
+        for d in catalog["documents"]:
+            if d["id"] == doc_id:
+                meta = d.get("metadata_structural")
+                if isinstance(meta, dict) and meta.get("title"):
+                    title = meta["title"]
+                break
+
+        # Rimuove eventuali triple precedenti del documento (idempotente).
+        graph_builder.remove_by_doc(doc_id)
+
+        # Estrae il grafo per il documento.
+        triples_added = graph_builder.extract_from_document(doc_id, processed_text, title)
+
+        # Conteggio dopo l'estrazione.
+        graph_after = graph_builder.get_graph()
+        entities_created = len(graph_after.get("nodes", [])) - nodes_before
+        relations_created = len(graph_after.get("edges", [])) - edges_before
+
+        metrics_store.record_processing(
+            doc_id=doc_id, phase="graph",
+            duration_s=time.time() - t_phase, filename=filename,
+        )
+        processing_tracker.complete_stage(
+            run_id, doc_id, StageType.GRAPH,
+            counters={
+                "entities_created": entities_created,
+                "relations_created": relations_created,
+            }
+        )
+        logger.info(
+            "[%s] GRAPH completato: %d entità, %d relazioni",
+            job.id, entities_created, relations_created,
+        )
+    except Exception as e:
+        processing_tracker.fail_stage(run_id, doc_id, StageType.GRAPH, str(e))
+        _mark_doc_error(str(e))
+        activity_log.log(ActivityAction.ERROR, filename, doc_id, detail=str(e)[:80])
+        raise
+
+    # =========================================================================
+    # COMPLETAMENTO ProcessingRun
+    # =========================================================================
+    logger.info("[%s] Completamento ProcessingRun %s", job.id, run_id)
+    processing_tracker.complete_run(run_id, doc_id)
+    logger.info("[%s] ProcessingRun completato con successo", job.id)
+
+    # Aggiornamento catalogo: documento READY
+    for doc in catalog["documents"]:
+        if doc["id"] == doc_id:
+            doc["status"] = DocumentStatus.READY.value
+            doc["chunks_count"] = chunks_count
+            doc["chunk_strategy"] = settings.CHUNK_STRATEGY
+            doc["error_message"] = None
+            doc["updated_at"] = datetime.now().isoformat()
+            break
+    _save_catalog(catalog)
+
+    activity_log.log(
+        ActivityAction.READY, filename, doc_id,
+        detail=f"{chunks_count} chunk",
+    )
+    logger.info("[%s] INDICIZZATO: %s -> %d chunk", job.id, filename, chunks_count)
+
+    return {
+        "skipped": False,
+        "chunks_count": chunks_count,
+        "filename": filename,
+    }
 
 
 def generate_graph_job(job):

@@ -18,6 +18,7 @@ pymupdf==1.24.10
 python-docx==1.1.2
 beautifulsoup4==4.12.3
 markdown==3.7
+extract-msg==0.56.1
 
 # --- Embedding e retrieval ---
 sentence-transformers==3.1.1

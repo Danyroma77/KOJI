@@ -26,6 +26,7 @@ CATEGORIE (euristica basata sul nome file):
 """
 
 from __future__ import annotations
+import asyncio
 import re
 import json
 from pathlib import Path

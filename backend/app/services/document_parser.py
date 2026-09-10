@@ -281,6 +281,100 @@ class EmailParser(BaseParser):
         return ParseResult(text=header + body, title=subject, author=author)
 
 
+class MsgParser(BaseParser):
+    """Parser per file email di Outlook (.msg).
+
+    Il formato MSG di Outlook è binario (OLEF/COM, CFBF). Si usa ``extract-msg``
+    come primo tentativo; in ambiente Windows con Outlook installato, viene
+    tentato il fallback su COM (MAPI). Il parser restituisce corpo + header
+    comuni (oggetto, mittente, data).
+    """
+
+    def parse(self, file_bytes: bytes, filename: str) -> ParseResult:
+        import os
+        from tempfile import NamedTemporaryFile
+
+        tmp_path = None
+        try:
+            with NamedTemporaryFile(delete=False, suffix=".msg") as tmp:
+                tmp.write(file_bytes)
+                tmp_path = tmp.name
+
+            # 1) extract-msg
+            try:
+                from extract_msg import Message
+
+                msg = Message(tmp_path)
+                subject = msg.subject or Path(filename).stem
+                author = msg.sender or None
+                body = msg.body or ""
+                if not body:
+                    body = getattr(msg, "htmlBody", "") or ""
+                    if body:
+                        from bs4 import BeautifulSoup
+
+                        body = BeautifulSoup(body, "html.parser").get_text("\n", strip=True)
+
+                date = None
+                try:
+                    date = msg.get("Sent") or msg.get("Date") or None
+                except Exception:
+                    date = None
+
+                header = (
+                    f"# {subject}\n\n**Da:** {author or 'N/D'}"
+                    f"\n**Data:** {date or 'N/D'}\n\n---\n\n"
+                )
+                return ParseResult(text=header + body, title=subject, author=author)
+            except Exception:
+                pass
+
+            # 2) win32com (Outlook COM) su Windows
+            try:
+                import win32com.client
+
+                outlook = win32com.client.Dispatch("Outlook.Application")
+                namespace = outlook.GetNamespace("MAPI")
+                mail = namespace.OpenSharedItem(tmp_path)
+                subject = getattr(mail, "Subject", None) or Path(filename).stem
+                author = getattr(mail, "Sender", None) or None
+                if not isinstance(author, str):
+                    try:
+                        author = getattr(author, "Name", None) or author
+                    except Exception:
+                        author = None
+                body = getattr(mail, "Body", "") or ""
+                html = getattr(mail, "HTMLBody", "")
+                if not body and html:
+                    from bs4 import BeautifulSoup
+
+                    body = BeautifulSoup(html, "html.parser").get_text("\n", strip=True)
+                date = None
+                try:
+                    sent = getattr(mail, "SentOn", None)
+                    if sent:
+                        date = str(sent)
+                except Exception:
+                    pass
+
+                header = (
+                    f"# {subject}\n\n**Da:** {author or 'N/D'}"
+                    f"\n**Data:** {date or 'N/D'}\n\n---\n\n"
+                )
+                return ParseResult(text=header + body, title=subject, author=author)
+            except Exception:
+                pass
+
+            # Fallback: nessuna estrazione automatica
+            return ParseResult(text="", title=Path(filename).stem)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+
 class TextParser(BaseParser):
     """Parser per file di testo semplice (.txt)."""
 
@@ -353,7 +447,7 @@ PARSER_MAP = {
     ".md": MarkdownParser,
     ".markdown": MarkdownParser,
     ".eml": EmailParser,
-    ".msg": EmailParser,
+    ".msg": MsgParser,
     ".txt": TextParser,
 }
 
